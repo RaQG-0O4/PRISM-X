@@ -1,0 +1,53 @@
+{
+  "performance_metrics": {
+    "observations": 1238,
+    "total_return": 0.16396019048530808,
+    "cagr": 0.03138777011957039,
+    "annualised_volatility": 0.15224822951388817,
+    "sharpe_ratio": 0.2791364720541635,
+    "sortino_ratio": 0.3966808782682035,
+    "beta": 1.0194042903647313,
+    "maximum_drawdown": -0.22788212317423173
+  },
+  "risk_metrics": {
+    "confidence": 0.95,
+    "observations": 1238,
+    "historical_var": 0.01545100491715967,
+    "historical_expected_shortfall": 0.021366131550417614,
+    "parametric_var": 0.015606715503574455,
+    "parametric_expected_shortfall": 0.019614292995817385
+  },
+  "simulation": {
+    "simulations": 10000.0,
+    "horizon_days": 252.0,
+    "loss_threshold": -0.2,
+    "mean_return": 0.043414199859255265,
+    "median_return": 0.03324922008239617,
+    "p01_return": -0.2778415229394751,
+    "p05_return": -0.19596731369623033,
+    "p95_return": 0.3231361778334856,
+    "probability_loss": 0.4172,
+    "probability_beyond_loss_threshold": 0.0471
+  },
+  "regime_observations": 1219,
+  "optimisation_methods": [
+    "minimum_volatility",
+    "maximum_sharpe",
+    "risk_parity",
+    "resilient"
+  ],
+  "price_file": "data\\raw\\prices\\portfolio_adjusted_close.csv",
+  "data_provenance": {
+    "price_source": "cached",
+    "price_start": "2021-10-05",
+    "price_end": "2026-10-01",
+    "benchmark": "^NSEI"
+  },
+  "backtest_methodology": {
+    "type": "walk_forward_for_optimised_strategies",
+    "train_window_days": 504,
+    "test_window_days": 63,
+    "transaction_cost_bps": 25.0
+  },
+  "gross_performance_note": "performance_metrics are historical fixed-weight gross metrics; original backtest includes one initial deployment cost, while walk-forward strategies include turnover costs at rebalances."
+}

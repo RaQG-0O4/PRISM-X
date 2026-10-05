@@ -1,0 +1,12 @@
+# Public Streamlit deployment dependencies.
+# The local project is installed so the src/prismx package is importable online.
+-e .
+
+# Match the Streamlit version used and tested locally.
+streamlit==1.65.0
+
+# Required by the dashboard and public market-data workflow.
+yfinance>=0.2.40,<1
+xgboost>=2.0,<4
+shap>=0.44,<1
+networkx>=3.2,<4

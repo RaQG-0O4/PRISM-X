@@ -1,0 +1,8 @@
+{
+  "confidence": 0.95,
+  "observations": 1238,
+  "historical_var": 0.01545100491715967,
+  "historical_expected_shortfall": 0.021366131550417614,
+  "parametric_var": 0.015606715503574455,
+  "parametric_expected_shortfall": 0.019614292995817385
+}

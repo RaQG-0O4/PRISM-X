@@ -1,0 +1,46 @@
+project:
+  name: PRISM-X
+  reporting_currency: INR
+  timezone: Asia/Kolkata
+  frequency: daily
+
+portfolio:
+  value_inr: 3700000
+  risk_appetite: moderate
+  holdings:
+    - name: HDFC Bank
+      weight: 0.20
+    - name: ICICI Bank
+      weight: 0.15
+    - name: Reliance Industries
+      weight: 0.20
+    - name: TCS
+      weight: 0.20
+    - name: Infosys
+      weight: 0.10
+    - name: Larsen & Toubro
+      weight: 0.15
+
+market:
+  benchmark: NIFTY 50
+  history_years: 10
+  # The current walk-forward evaluator uses 63-trading-day test windows;
+  # this field documents the intended live policy and is not a live order engine.
+  rebalance_frequency: monthly
+
+constraints:
+  long_only: true
+  allow_leverage: false
+  maximum_single_holding: 0.30
+  # Reserved for future sector metadata integration; not enforced by v0.1.0.
+  maximum_sector_exposure: 0.50
+  transaction_cost_bps: 25
+
+risk_targets:
+  severe_drawdown_horizon_days: 20
+  severe_drawdown_threshold: -0.10
+  reverse_stress_target: -0.20
+
+providers:
+  price_provider: yfinance
+  news_provider: yfinance

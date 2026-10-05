@@ -1,0 +1,10 @@
+{
+  "observations": 1238,
+  "total_return": 0.16396019048530808,
+  "cagr": 0.03138777011957039,
+  "annualised_volatility": 0.15224822951388817,
+  "sharpe_ratio": 0.2791364720541635,
+  "sortino_ratio": 0.3966808782682035,
+  "beta": 1.0194042903647313,
+  "maximum_drawdown": -0.22788212317423173
+}

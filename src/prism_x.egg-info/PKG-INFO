@@ -1,0 +1,64 @@
+Metadata-Version: 2.4
+Name: prism-x
+Version: 0.1.0
+Summary: Portfolio Risk & Stress Testing Engine
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy<3,>=1.26
+Requires-Dist: pandas<3,>=2.1
+Requires-Dist: pydantic<3,>=2.5
+Requires-Dist: pyyaml<7,>=6.0
+Requires-Dist: scipy<2,>=1.11
+Requires-Dist: statsmodels<1,>=0.14
+Requires-Dist: scikit-learn<2,>=1.3
+Requires-Dist: plotly<7,>=5.18
+Requires-Dist: streamlit<2,>=1.30
+Requires-Dist: pytest<9,>=7.4
+Provides-Extra: market-data
+Requires-Dist: yfinance<1,>=0.2.40; extra == "market-data"
+Provides-Extra: advanced
+Requires-Dist: xgboost<4,>=2.0; extra == "advanced"
+Requires-Dist: shap<1,>=0.44; extra == "advanced"
+Requires-Dist: networkx<4,>=3.2; extra == "advanced"
+Requires-Dist: cvxpy<2,>=1.4; extra == "advanced"
+Provides-Extra: deep-learning
+Requires-Dist: tensorflow<3,>=2.15; extra == "deep-learning"
+Provides-Extra: sentiment
+Requires-Dist: transformers<5,>=4.36; extra == "sentiment"
+Requires-Dist: torch<3,>=2.1; extra == "sentiment"
+
+# PRISM-X
+
+PRISM-X (Portfolio Risk & Stress Testing Engine) is an explainable portfolio analytics and resilience platform.
+
+The intended user workflow is:
+
+1. Enter stock names, portfolio value and risk appetite.
+2. Resolve and validate the securities.
+3. Collect historical market data and timestamped financial news.
+4. Calculate portfolio risk and return characteristics.
+5. Run stress tests, simulations, regime analysis and predictive models.
+6. Recommend portfolio weights subject to the investor's constraints.
+7. Explain the recommendation and compare it with the original portfolio.
+
+## Current status
+
+The repository currently contains the project foundation, provisional scope and data contract. No market-data provider or machine-learning model has been connected yet.
+
+## Initial scope
+
+- Indian equities
+- INR reporting
+- Daily observations
+- NIFTY 50 as the initial benchmark
+- Long-only portfolios
+- Monthly rebalancing
+- No leverage
+- Five to ten years of history where available
+- Explainable outputs suitable for a finance-student viva
+
+See [`docs/project_charter.md`](docs/project_charter.md) and [`config/portfolio.example.yaml`](config/portfolio.example.yaml) for the initial assumptions.
+
+## Important limitation
+
+PRISM-X will produce a risk-aware recommendation, not a guaranteed or universally perfect portfolio. Results depend on data quality, assumptions, model uncertainty and the selected constraints.

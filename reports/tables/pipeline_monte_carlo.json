@@ -1,0 +1,12 @@
+{
+  "simulations": 10000.0,
+  "horizon_days": 252.0,
+  "loss_threshold": -0.2,
+  "mean_return": 0.043414199859255265,
+  "median_return": 0.03324922008239617,
+  "p01_return": -0.2778415229394751,
+  "p05_return": -0.19596731369623033,
+  "p95_return": 0.3231361778334856,
+  "probability_loss": 0.4172,
+  "probability_beyond_loss_threshold": 0.0471
+}
