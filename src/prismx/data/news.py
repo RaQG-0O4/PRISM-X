@@ -4,8 +4,42 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Iterable
+from urllib.parse import quote_plus
+from urllib.request import Request, urlopen
+from xml.etree import ElementTree
 
 import pandas as pd
+
+
+def _collect_google_news_rss(ticker: str, limit: int, retrieved_at: str) -> list[dict[str, object]]:
+    """Use Google News RSS as a lightweight fallback when Yahoo has no rows."""
+
+    query = quote_plus(f"{ticker} stock finance")
+    url = (
+        "https://news.google.com/rss/search?"
+        f"q={query}&hl=en-IN&gl=IN&ceid=IN:en"
+    )
+    request = Request(url, headers={"User-Agent": "PRISM-X/0.1 financial research"})
+    with urlopen(request, timeout=10) as response:  # noqa: S310 - fixed HTTPS provider URL
+        payload = response.read()
+    root = ElementTree.fromstring(payload)
+    rows: list[dict[str, object]] = []
+    for item in root.findall("./channel/item")[:limit]:
+        title = item.findtext("title")
+        if not title:
+            continue
+        source = item.find("source")
+        rows.append(
+            {
+                "ticker": ticker,
+                "title": str(title),
+                "published_at": item.findtext("pubDate"),
+                "url": item.findtext("link"),
+                "source": source.text if source is not None else "Google News RSS",
+                "retrieved_at": retrieved_at,
+            }
+        )
+    return rows
 
 
 def collect_yfinance_news(tickers: Iterable[str], limit_per_ticker: int = 20) -> pd.DataFrame:
@@ -53,6 +87,15 @@ def collect_yfinance_news(tickers: Iterable[str], limit_per_ticker: int = 20) ->
                 }
             )
     result = pd.DataFrame(rows)
+    if result.empty:
+        rss_failures: dict[str, str] = {}
+        for ticker in dict.fromkeys(tickers):
+            try:
+                rows.extend(_collect_google_news_rss(ticker, limit_per_ticker, retrieved_at))
+            except Exception as error:  # noqa: BLE001 - fallback must remain non-blocking
+                rss_failures[ticker] = str(error)
+        failures.update({f"{ticker} (RSS fallback)": reason for ticker, reason in rss_failures.items()})
+        result = pd.DataFrame(rows)
     result.attrs["collection_errors"] = failures
     return result
 

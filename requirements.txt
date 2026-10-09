@@ -10,3 +10,10 @@ yfinance>=0.2.40,<1
 xgboost>=2.0,<4
 shap>=0.44,<1
 networkx>=3.2,<4
+
+# Optional AI models enabled in the public deployment.
+# These are CPU inference/training dependencies; the dashboard continues to
+# report a model-specific warning if a provider or runtime cannot load them.
+tensorflow>=2.15,<3
+transformers>=4.36,<5
+torch>=2.1,<3
