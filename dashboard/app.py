@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 import inspect
 from pathlib import Path
 import subprocess
@@ -17,6 +18,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = PROJECT_ROOT / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
+
+# A long-lived Streamlit process may retain modules imported from a previous
+# deployment. Remove only PRISM-X modules so the current checkout is loaded.
+for module_name in list(sys.modules):
+    if module_name == "prismx" or module_name.startswith("prismx."):
+        del sys.modules[module_name]
+importlib.invalidate_caches()
 
 from prismx.reporting import build_html_report
 from prismx.workflow import analyse_user_portfolio
