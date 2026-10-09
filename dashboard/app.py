@@ -428,8 +428,25 @@ if interactive_analysis is not None:
         simulation_columns[3].metric(
             "Median outcome", f"{result.monte_carlo_summary['median_return']:.2%}"
         )
-        histogram = pd.cut(result.monte_carlo_outcomes, bins=20).value_counts().sort_index()
-        st.bar_chart(histogram, y_label="Simulations", alt="Monte Carlo outcome distribution")
+        # Altair cannot serialise pandas IntervalIndex values reliably on the
+        # deployed Streamlit runtime. Convert the bins to explicit labels and
+        # pass a regular DataFrame with named x/y columns instead.
+        histogram_counts = pd.cut(
+            result.monte_carlo_outcomes, bins=20, include_lowest=True
+        ).value_counts().sort_index()
+        histogram = pd.DataFrame(
+            {
+                "Outcome range": histogram_counts.index.astype(str),
+                "Simulations": histogram_counts.to_numpy(dtype=int),
+            }
+        )
+        st.bar_chart(
+            histogram,
+            x="Outcome range",
+            y="Simulations",
+            y_label="Simulations",
+            alt="Monte Carlo outcome distribution",
+        )
 
     if result.model_signals or result.model_errors:
         st.subheader("Model evidence centre")
