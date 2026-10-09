@@ -31,6 +31,10 @@ def score_finbert(
         "text-classification",
         model=model_name,
         tokenizer=model_name,
+        # Force the PyTorch backend.  Streamlit Cloud currently installs
+        # TensorFlow for the LSTM, and Transformers otherwise tries to use
+        # TensorFlow first; that path is incompatible with Keras 3.
+        framework="pt",
         truncation=True,
     )
     texts = news[text_column].astype(str).tolist()
