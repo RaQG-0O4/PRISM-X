@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from pathlib import Path
 import subprocess
 import sys
@@ -137,22 +138,39 @@ if st.sidebar.button("Analyse Portfolio", type="primary"):
                     raise ValueError(
                         "News CSV is missing: " + ", ".join(sorted(missing_news_columns))
                     )
+            analysis_options = {
+                "amount_inr": amount_inr,
+                "stock_names": entered_stocks,
+                "risk_appetite": risk_appetite,
+                "history_years": history_years,
+                "run_xgboost": run_xgboost,
+                "run_finbert": run_finbert,
+                "run_lstm": run_lstm,
+                "run_walk_forward": run_walk_forward,
+                "run_macro": run_macro,
+                "news": uploaded_news,
+                "transaction_cost_bps": transaction_cost_bps,
+            }
+            # Streamlit can briefly reuse an older installed package while a
+            # new GitHub commit is redeploying.  Pass optional arguments only
+            # when the loaded workflow exposes them, so that the dashboard
+            # remains usable during that short transition.
+            workflow_parameters = inspect.signature(analyse_user_portfolio).parameters
+            if "run_monte_carlo" in workflow_parameters:
+                analysis_options.update(
+                    {
+                        "run_monte_carlo": run_monte_carlo,
+                        "monte_carlo_simulations": int(monte_carlo_simulations),
+                        "monte_carlo_horizon_days": monte_carlo_horizon_days,
+                        "monte_carlo_loss_threshold": monte_carlo_loss_threshold,
+                    }
+                )
+            else:
+                st.info(
+                    "The deployment is refreshing its analysis engine. Monte Carlo options will become available after the latest version finishes loading."
+                )
             st.session_state["interactive_analysis"] = analyse_user_portfolio(
-                amount_inr=amount_inr,
-                stock_names=entered_stocks,
-                risk_appetite=risk_appetite,
-                history_years=history_years,
-                run_xgboost=run_xgboost,
-                run_finbert=run_finbert,
-                run_lstm=run_lstm,
-                run_walk_forward=run_walk_forward,
-                run_macro=run_macro,
-                news=uploaded_news,
-                transaction_cost_bps=transaction_cost_bps,
-                run_monte_carlo=run_monte_carlo,
-                monte_carlo_simulations=int(monte_carlo_simulations),
-                monte_carlo_horizon_days=monte_carlo_horizon_days,
-                monte_carlo_loss_threshold=monte_carlo_loss_threshold,
+                **analysis_options,
             )
             st.session_state.pop("interactive_error", None)
         except Exception as error:  # noqa: BLE001 - show a user-readable dashboard error
