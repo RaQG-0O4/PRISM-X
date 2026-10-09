@@ -11,11 +11,17 @@ import sys
 import pandas as pd
 import streamlit as st
 
+# Prefer the source tree from the current GitHub checkout over any cached
+# package installation that Streamlit Cloud may still have in its environment.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = PROJECT_ROOT / "src"
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
+
 from prismx.reporting import build_html_report
 from prismx.workflow import analyse_user_portfolio
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPORTS = PROJECT_ROOT / "reports" / "tables"
 
 
