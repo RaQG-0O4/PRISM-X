@@ -121,6 +121,26 @@ def _validate_weights(weights: Mapping[str, float]) -> pd.Series:
     return weight_series
 
 
+def calculate_concentration_metrics(weights: Mapping[str, float]) -> dict[str, float]:
+    """Measure how concentrated a long-only portfolio is.
+
+    HHI is the sum of squared portfolio weights.  A lower value indicates
+    broader diversification; the effective number of holdings is its inverse.
+    These are descriptive diagnostics, not a claim that diversification alone
+    removes investment risk.
+    """
+
+    weight_series = _validate_weights(weights)
+    hhi = float((weight_series**2).sum())
+    return {
+        "hhi": hhi,
+        "effective_number_of_holdings": float(1.0 / hhi) if hhi > 0 else 0.0,
+        "largest_holding_weight": float(weight_series.max()),
+        "top_three_weight": float(weight_series.nlargest(3).sum()),
+        "number_of_holdings": float(weight_series.size),
+    }
+
+
 def calculate_volatility_risk_contribution(
     asset_returns: pd.DataFrame,
     weights: Mapping[str, float],

@@ -130,6 +130,9 @@ def train_risk_model(
         "brier_score": float(brier_score_loss(y_test, probabilities)),
         "decision_threshold": threshold,
         "majority_baseline_accuracy": float(max(y_test.mean(), 1.0 - y_test.mean())),
+        "train_observations": float(len(x_train)),
+        "validation_observations": float(len(x_validation)),
+        "test_observations": float(len(x_test)),
     }
     if y_test.nunique() > 1:
         metrics["roc_auc"] = float(roc_auc_score(y_test, probabilities))

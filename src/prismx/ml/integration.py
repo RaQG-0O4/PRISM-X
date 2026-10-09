@@ -215,13 +215,13 @@ def _cap_and_normalise(weights: pd.Series, maximum_weight: float) -> pd.Series:
     return result / result.sum()
 
 
-def adjust_weights_with_signals(
+def adjust_weights_with_signals_trace(
     base_weights: pd.Series,
     minimum_volatility_weights: pd.Series,
     signals: dict[str, dict[str, Any]],
     risk_appetite: str,
     maximum_weight: float,
-) -> pd.Series:
+) -> tuple[pd.Series, pd.DataFrame]:
     """Apply small, explainable model adjustments to the optimiser output.
 
     Signals do not replace the optimiser.  They tilt the result toward the
@@ -231,6 +231,7 @@ def adjust_weights_with_signals(
 
     weights = pd.Series(base_weights, dtype=float).copy()
     low_vol = pd.Series(minimum_volatility_weights, dtype=float).reindex(weights.index).fillna(0.0)
+    trace = pd.DataFrame({"base_optimizer": weights.copy()})
 
     if "xgboost" in signals:
         probability = float(signals["xgboost"].get("severe_loss_probability", 0.0))
@@ -239,6 +240,7 @@ def adjust_weights_with_signals(
         )
         blend = float(np.clip(probability * appetite_blend, 0.0, 0.30))
         weights = (1.0 - blend) * weights + blend * low_vol
+    trace["after_xgboost"] = weights.copy()
 
     if "lstm" in signals:
         lstm_signal = signals["lstm"]
@@ -247,6 +249,7 @@ def adjust_weights_with_signals(
         rising_risk = max(forecast / current - 1.0, 0.0)
         blend = float(np.clip(rising_risk * 0.20, 0.0, 0.20))
         weights = (1.0 - blend) * weights + blend * low_vol
+    trace["after_lstm"] = weights.copy()
 
     if "finbert" in signals:
         sentiment = signals["finbert"].get("by_ticker", {})
@@ -257,4 +260,27 @@ def adjust_weights_with_signals(
             signal = float(sentiment.get(ticker, 0.0))
             weights.loc[ticker] *= 1.0 + tilt_size * float(np.clip(signal, -1.0, 1.0))
 
-    return _cap_and_normalise(weights, maximum_weight)
+    trace["after_finbert"] = weights.copy()
+    final_weights = _cap_and_normalise(weights, maximum_weight)
+    trace["final_constrained"] = final_weights.copy()
+    trace.index.name = "ticker"
+    return final_weights, trace.reset_index()
+
+
+def adjust_weights_with_signals(
+    base_weights: pd.Series,
+    minimum_volatility_weights: pd.Series,
+    signals: dict[str, dict[str, Any]],
+    risk_appetite: str,
+    maximum_weight: float,
+) -> pd.Series:
+    """Apply model tilts while preserving the original public API."""
+
+    weights, _ = adjust_weights_with_signals_trace(
+        base_weights,
+        minimum_volatility_weights,
+        signals,
+        risk_appetite,
+        maximum_weight,
+    )
+    return weights

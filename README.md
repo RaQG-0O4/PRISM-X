@@ -19,14 +19,19 @@ The repository contains a working research prototype with:
 - yfinance historical adjusted-close data and optional macro/news collection;
 - name-to-ticker resolution for the configured Indian-equity universe;
 - long-only minimum-volatility, maximum-Sharpe, risk-parity and resilient optimisers;
+- shrinkage-covariance robust minimum-volatility diagnostics;
 - historical risk, stress testing, Monte Carlo simulation and correlation-network analysis;
 - chronological walk-forward comparison with turnover costs;
+- investor utility comparisons, benchmark gaps, concentration diagnostics and a
+  transparent optimiser-to-model weight trace;
 - optional XGBoost, LSTM and FinBERT signals with model-specific validation metrics;
 - a Streamlit dashboard and printable HTML faculty report.
 
 The machine-learning and news components remain optional and should be described as
 research prototypes: live FinBERT sentiment is not historical out-of-sample evidence,
-and the LSTM/XGBoost scores do not guarantee portfolio returns.
+and the LSTM/XGBoost scores do not guarantee portfolio returns. When XGBoost is
+selected for walk-forward evaluation, PRISM-X retrains it inside each historical
+training window before applying the signal to the next unseen period.
 
 ## Initial scope
 

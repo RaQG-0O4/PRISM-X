@@ -60,6 +60,20 @@ def optimise_portfolios(
     covariance = selected.cov() * 252
     cov = covariance.to_numpy()
 
+    # A shrinkage covariance estimate is included as a robustness diagnostic.
+    # It reduces the sensitivity of the covariance matrix to noisy historical
+    # correlations while leaving the standard optimisers unchanged.
+    try:
+        from sklearn.covariance import LedoitWolf
+
+        shrinkage_covariance = pd.DataFrame(
+            LedoitWolf().fit(selected.to_numpy()).covariance_ * 252,
+            index=selected.columns,
+            columns=selected.columns,
+        )
+    except Exception:  # pragma: no cover - scikit-learn is a project dependency
+        shrinkage_covariance = covariance.copy()
+
     def volatility(weights: np.ndarray) -> float:
         return float(np.sqrt(max(weights.T @ cov @ weights, 0.0)))
 
@@ -83,8 +97,16 @@ def optimise_portfolios(
             weights @ mean_returns.to_numpy()
         )
 
+    robust_cov = shrinkage_covariance.to_numpy()
+
+    def robust_volatility(weights: np.ndarray) -> float:
+        return float(np.sqrt(max(weights.T @ robust_cov @ weights, 0.0)))
+
     return {
         "minimum_volatility": _optimise(mean_returns, covariance, volatility, maximum_weight),
+        "robust_minimum_volatility": _optimise(
+            mean_returns, shrinkage_covariance, robust_volatility, maximum_weight
+        ),
         "maximum_sharpe": _optimise(mean_returns, covariance, negative_sharpe, maximum_weight),
         "risk_parity": _optimise(mean_returns, covariance, risk_parity, maximum_weight),
         "resilient": _optimise(mean_returns, covariance, resilient, maximum_weight),

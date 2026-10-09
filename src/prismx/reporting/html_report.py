@@ -117,6 +117,23 @@ def build_html_report(result: Any) -> str:
         result.candidate_metrics,
         ("CAGR", "volatility", "max_drawdown"),
     )
+    weight_trace = _format_frame(
+        getattr(result, "weight_trace", pd.DataFrame()),
+        ("base_optimizer", "after_xgboost", "after_lstm", "after_finbert", "final_constrained"),
+    )
+    investor_value = _format_frame(
+        getattr(result, "investor_value", pd.DataFrame()),
+        (
+            "CAGR",
+            "volatility",
+            "max_drawdown",
+            "utility_score",
+            "utility_gap_to_best",
+            "CAGR_vs_benchmark",
+            "volatility_vs_benchmark",
+            "drawdown_vs_benchmark",
+        ),
+    )
     risk_table = pd.DataFrame(
         [
             {
@@ -176,6 +193,25 @@ def build_html_report(result: Any) -> str:
     walk_forward_section = _table(walk_forward_metrics)
     if walk_forward_error:
         walk_forward_section += f"<p><b>Walk-forward note:</b> {escape(str(walk_forward_error))}</p>"
+    concentration = getattr(result, "concentration_metrics", {}) or {}
+    concentration_table = pd.DataFrame(
+        [
+            {"measure": "HHI", "value": _number(concentration.get("hhi"))},
+            {
+                "measure": "Effective number of holdings",
+                "value": _number(concentration.get("effective_number_of_holdings")),
+            },
+            {
+                "measure": "Largest holding",
+                "value": _percent(concentration.get("largest_holding_weight")),
+            },
+            {
+                "measure": "Top-three concentration",
+                "value": _percent(concentration.get("top_three_weight")),
+            },
+        ]
+    )
+    monte_carlo_summary = getattr(result, "monte_carlo_summary", {}) or {}
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>{escape(title)}</title>
@@ -220,6 +256,9 @@ footer {{ margin-top: 35px; color: #667085; font-size: 12px; }}
 
 <h2>Resolved securities</h2>{_table(resolution)}
 <h2>Recommended allocation</h2>{_table(allocation)}
+<h2>Why these weights?</h2>
+<p>The table traces the recommendation from the selected optimiser through each available model adjustment and the final per-security constraint.</p>
+{_table(weight_trace)}
 
 <h2>Portfolio ratios and outcome</h2>
 <div class="metrics">
@@ -233,12 +272,16 @@ footer {{ margin-top: 35px; color: #667085; font-size: 12px; }}
 <p>{escape(outcome_explanation)}</p>
 
 <h2>Risk analysis</h2>{_table(risk_table)}
+<h2>Concentration diagnostics</h2>{_table(concentration_table)}
 <h2>Optimisation comparison</h2>{_table(candidates)}
+<h2>Investor value comparison</h2>{_table(investor_value)}
 <h2>Stress scenarios</h2>{_table(getattr(result, "stress_results", pd.DataFrame()))}
 <h2>Reverse stress test</h2>{_table(getattr(result, "reverse_stress", pd.DataFrame()))}
 <h2>Factor and market exposure</h2>{_table(getattr(result, "factor_snapshot", pd.DataFrame()))}
 <h2>Walk-forward validation</h2>{walk_forward_section}
 <h2>AI model evidence</h2>{_table(model_table)}{model_error_section}
+<h2>Monte Carlo simulation</h2>
+{_table(pd.DataFrame([monte_carlo_summary]) if monte_carlo_summary else pd.DataFrame())}
 
 <h2>Interpretation and limitations</h2>
 <ul>

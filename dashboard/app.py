@@ -103,6 +103,26 @@ run_macro = st.sidebar.checkbox(
     "Macro factors",
     help="Downloads India VIX, USD/INR, crude oil, gold and US 10Y yield data for context and XGBoost features.",
 )
+run_monte_carlo = st.sidebar.checkbox(
+    "Monte Carlo simulation",
+    help="Simulates portfolio outcomes using historical means and correlations.",
+)
+monte_carlo_horizon_days = st.sidebar.slider(
+    "Simulation horizon (days)", min_value=21, max_value=756, value=252, step=21
+)
+monte_carlo_simulations = st.sidebar.select_slider(
+    "Number of simulations",
+    options=[1_000, 2_500, 5_000, 10_000],
+    value=5_000,
+)
+monte_carlo_loss_threshold = st.sidebar.slider(
+    "Simulation loss threshold",
+    min_value=-0.50,
+    max_value=-0.05,
+    value=-0.20,
+    step=0.05,
+    format="%.0f%%",
+)
 
 if st.sidebar.button("Analyse Portfolio", type="primary"):
     entered_stocks = [value.strip() for value in stock_text.replace(",", "\n").splitlines()]
@@ -129,6 +149,10 @@ if st.sidebar.button("Analyse Portfolio", type="primary"):
                 run_macro=run_macro,
                 news=uploaded_news,
                 transaction_cost_bps=transaction_cost_bps,
+                run_monte_carlo=run_monte_carlo,
+                monte_carlo_simulations=int(monte_carlo_simulations),
+                monte_carlo_horizon_days=monte_carlo_horizon_days,
+                monte_carlo_loss_threshold=monte_carlo_loss_threshold,
             )
             st.session_state.pop("interactive_error", None)
         except Exception as error:  # noqa: BLE001 - show a user-readable dashboard error
@@ -165,10 +189,27 @@ if interactive_analysis is not None:
         [{"stock_name": name, "resolved_ticker": ticker} for name, ticker in result.name_to_ticker.items()]
     )
     st.dataframe(resolved, width="stretch", hide_index=True)
+    st.subheader("Data health")
+    health_columns = st.columns(4)
+    health_columns[0].metric("Price observations", f"{result.performance_metrics.observations:,}")
+    health_columns[1].metric("Data start", result.data_start)
+    health_columns[2].metric("Data end", result.data_end)
+    health_columns[3].metric("Benchmark", result.benchmark_ticker)
+    st.caption(
+        "All model and optimisation results use the resolved securities and the displayed historical period. Provider failures are shown explicitly rather than replaced with invented values."
+    )
 
     st.subheader("Suggested allocations")
     st.dataframe(
-        result.allocation.style.format({"weight": "{:.2%}", "amount_inr": "INR {:,.0f}"}),
+        result.allocation.style.format(
+            {
+                "weight": "{:.2%}",
+                "amount_inr": "INR {:,.0f}",
+                "latest_price": "INR {:,.2f}",
+                "estimated_shares": "{:,.0f}",
+                "estimated_cost_inr": "INR {:,.0f}",
+            }
+        ),
         width="stretch",
         hide_index=True,
     )
@@ -180,9 +221,67 @@ if interactive_analysis is not None:
     st.subheader("Optimisation method comparison")
     st.dataframe(
         result.candidate_metrics.style.format(
-            {"CAGR": "{:.2%}", "volatility": "{:.2%}", "Sharpe": "{:.2f}", "max_drawdown": "{:.2%}"}
+            {
+                "CAGR": "{:.2%}",
+                "volatility": "{:.2%}",
+                "Sharpe": "{:.2f}",
+                "max_drawdown": "{:.2%}",
+                "utility_score": "{:.4f}",
+                "CAGR_vs_benchmark": "{:.2%}",
+                "volatility_vs_benchmark": "{:.2%}",
+                "drawdown_vs_benchmark": "{:.2%}",
+            }
         ),
         width="stretch",
+    )
+
+    st.subheader("Investor value comparison")
+    st.caption(
+        "The utility score is a transparent historical comparison proxy that penalises volatility and drawdown according to the selected risk appetite. It is not a return guarantee."
+    )
+    st.dataframe(
+        getattr(result, "investor_value", pd.DataFrame()).style.format(
+            {
+                "utility_score": "{:.4f}",
+                "utility_gap_to_best": "{:.4f}",
+                "CAGR_vs_benchmark": "{:.2%}",
+                "volatility_vs_benchmark": "{:.2%}",
+                "drawdown_vs_benchmark": "{:.2%}",
+            }
+        ),
+        width="stretch",
+    )
+
+    st.subheader("Why these weights?")
+    st.caption(
+        "Each column shows how the constrained optimiser was adjusted by the available model signals. An unchanged column means that model was not selected or produced no usable signal."
+    )
+    st.dataframe(
+        getattr(result, "weight_trace", pd.DataFrame()).style.format(
+            {
+                "base_optimizer": "{:.2%}",
+                "after_xgboost": "{:.2%}",
+                "after_lstm": "{:.2%}",
+                "after_finbert": "{:.2%}",
+                "final_constrained": "{:.2%}",
+            }
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.subheader("Portfolio concentration")
+    concentration = getattr(result, "concentration_metrics", {})
+    concentration_columns = st.columns(4)
+    concentration_columns[0].metric("HHI", f"{concentration.get('hhi', 0.0):.3f}")
+    concentration_columns[1].metric(
+        "Effective holdings", f"{concentration.get('effective_number_of_holdings', 0.0):.1f}"
+    )
+    concentration_columns[2].metric(
+        "Largest holding", f"{concentration.get('largest_holding_weight', 0.0):.2%}"
+    )
+    concentration_columns[3].metric(
+        "Top 3 concentration", f"{concentration.get('top_three_weight', 0.0):.2%}"
     )
 
     if not result.walk_forward_metrics.empty:
@@ -210,6 +309,15 @@ if interactive_analysis is not None:
             y_label="Growth of INR 1",
             alt="Walk-forward growth of one invested rupee",
         )
+        if not getattr(result, "walk_forward_turnover", pd.DataFrame()).empty:
+            st.write("Turnover at each rebalance")
+            st.line_chart(
+                getattr(result, "walk_forward_turnover", pd.DataFrame()),
+                y_label="Turnover",
+                alt="Walk-forward portfolio turnover",
+            )
+        if getattr(result, "walk_forward_model_errors", []):
+            st.warning("Some AI walk-forward windows were unavailable: " + "; ".join(getattr(result, "walk_forward_model_errors", [])[:3]))
     if result.walk_forward_error:
         st.warning(f"Walk-forward validation was not completed: {result.walk_forward_error}")
 
@@ -269,13 +377,35 @@ if interactive_analysis is not None:
     for macro_name, macro_error in result.macro_errors.items():
         st.warning(f"Macro factor unavailable — {macro_name}: {macro_error}")
 
+    if getattr(result, "monte_carlo_summary", {}):
+        st.subheader("Monte Carlo simulation")
+        st.caption(
+            "A reproducible parametric simulation based on historical moments. It is a scenario tool, not a forecast."
+        )
+        simulation_columns = st.columns(4)
+        simulation_columns[0].metric(
+            "Probability of loss", f"{result.monte_carlo_summary['probability_loss']:.2%}"
+        )
+        simulation_columns[1].metric(
+            "Probability beyond threshold",
+            f"{result.monte_carlo_summary['probability_beyond_loss_threshold']:.2%}",
+        )
+        simulation_columns[2].metric(
+            "5th percentile outcome", f"{result.monte_carlo_summary['p05_return']:.2%}"
+        )
+        simulation_columns[3].metric(
+            "Median outcome", f"{result.monte_carlo_summary['median_return']:.2%}"
+        )
+        histogram = pd.cut(result.monte_carlo_outcomes, bins=20).value_counts().sort_index()
+        st.bar_chart(histogram, y_label="Simulations", alt="Monte Carlo outcome distribution")
+
     if result.model_signals or result.model_errors:
-        st.subheader("AI model signals used")
+        st.subheader("Model evidence centre")
         overall_validation = result.model_signals.get("overall_validation")
         if overall_validation:
             overall_columns = st.columns(2)
             overall_columns[0].metric(
-                "Overall model validation score",
+                "Composite evidence score (not accuracy)",
                 f"{float(overall_validation['score_pct']):.1f}/100",
             )
             overall_columns[1].metric(
@@ -283,7 +413,7 @@ if interactive_analysis is not None:
                 f"{float(overall_validation['measurement_coverage_pct']):.0f}%",
             )
             st.caption(
-                "This is a model-quality score from time-ordered validation, not a guarantee of future returns."
+                "Different models predict different targets. This composite is only a coverage-weighted research summary, not total portfolio accuracy or a guarantee of future returns."
             )
         signal_rows = []
         if "xgboost" in result.model_signals:
@@ -302,13 +432,15 @@ if interactive_analysis is not None:
                         f"PR-AUC: {float(pr_auc):.3f} · "
                         f"test accuracy: "
                         f"{float(xgb_metrics.get('accuracy', 0.0)):.2%} · "
-                        f"ROC-AUC: {float(roc_auc):.3f}"
+                        f"ROC-AUC: {float(roc_auc):.3f} · "
+                        f"test n: {int(xgb_metrics.get('test_observations', 0))}"
                         if roc_auc is not None and pr_auc is not None
                         else (
                             f"{signal['model_name']} · test balanced accuracy: "
                             f"{float(balanced_accuracy):.2%} · "
                             f"PR-AUC unavailable · test accuracy: "
                             f"{float(xgb_metrics.get('accuracy', 0.0)):.2%} · "
+                            f"test n: {int(xgb_metrics.get('test_observations', 0))} · "
                             + (f"ROC-AUC: {float(roc_auc):.3f}" if roc_auc is not None else "ROC-AUC unavailable")
                         )
                     ),

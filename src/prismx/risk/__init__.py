@@ -2,6 +2,7 @@
 
 from .metrics import (
     RiskMetrics,
+    calculate_concentration_metrics,
     calculate_risk_metrics,
     calculate_tail_risk_contribution,
     calculate_volatility_risk_contribution,
@@ -9,6 +10,7 @@ from .metrics import (
 
 __all__ = [
     "RiskMetrics",
+    "calculate_concentration_metrics",
     "calculate_risk_metrics",
     "calculate_tail_risk_contribution",
     "calculate_volatility_risk_contribution",

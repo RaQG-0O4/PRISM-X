@@ -9,10 +9,12 @@ import pandas as pd
 
 from prismx.analytics import (
     PortfolioMetrics,
+    add_investor_utility_score,
     calculate_asset_returns,
     calculate_factor_snapshot,
     calculate_metrics,
     calculate_portfolio_returns,
+    compare_to_benchmark,
 )
 from prismx.data import (
     collect_macro_returns,
@@ -21,9 +23,14 @@ from prismx.data import (
     search_ticker_online,
 )
 from prismx.evaluation import run_walk_forward_evaluation
-from prismx.ml import adjust_weights_with_signals, run_optional_models
+from prismx.ml import adjust_weights_with_signals_trace, run_optional_models
 from prismx.optimisation import optimise_portfolios
-from prismx.risk import RiskMetrics, calculate_risk_metrics
+from prismx.risk import (
+    RiskMetrics,
+    calculate_concentration_metrics,
+    calculate_risk_metrics,
+)
+from prismx.simulation import simulate_portfolio, simulation_summary
 from prismx.stress import (
     StressScenario,
     historical_stress_scenarios,
@@ -69,6 +76,9 @@ class InteractiveAnalysis:
     model_errors: dict[str, str]
     walk_forward_metrics: pd.DataFrame = field(default_factory=pd.DataFrame)
     walk_forward_returns: pd.DataFrame = field(default_factory=pd.DataFrame)
+    walk_forward_turnover: pd.DataFrame = field(default_factory=pd.DataFrame)
+    walk_forward_transaction_costs: pd.DataFrame = field(default_factory=pd.DataFrame)
+    walk_forward_model_errors: list[str] = field(default_factory=list)
     walk_forward_error: str | None = None
     stress_results: pd.DataFrame = field(default_factory=pd.DataFrame)
     historical_stress: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -76,6 +86,11 @@ class InteractiveAnalysis:
     factor_snapshot: pd.DataFrame = field(default_factory=pd.DataFrame)
     macro_returns: pd.DataFrame = field(default_factory=pd.DataFrame)
     macro_errors: dict[str, str] = field(default_factory=dict)
+    weight_trace: pd.DataFrame = field(default_factory=pd.DataFrame)
+    concentration_metrics: dict[str, float] = field(default_factory=dict)
+    investor_value: pd.DataFrame = field(default_factory=pd.DataFrame)
+    monte_carlo_summary: dict[str, float] = field(default_factory=dict)
+    monte_carlo_outcomes: pd.Series = field(default_factory=pd.Series)
 
 
 def analyse_user_portfolio(
@@ -90,6 +105,10 @@ def analyse_user_portfolio(
     run_macro: bool = False,
     news: pd.DataFrame | None = None,
     transaction_cost_bps: float = 25.0,
+    run_monte_carlo: bool = False,
+    monte_carlo_simulations: int = 5_000,
+    monte_carlo_horizon_days: int = 252,
+    monte_carlo_loss_threshold: float = -0.20,
 ) -> InteractiveAnalysis:
     """Download data and calculate a risk-appetite-specific recommendation."""
 
@@ -122,12 +141,18 @@ def analyse_user_portfolio(
     holding_returns = returns.loc[:, holding_tickers]
     walk_forward_metrics = pd.DataFrame()
     walk_forward_returns = pd.DataFrame()
+    walk_forward_turnover = pd.DataFrame()
+    walk_forward_transaction_costs = pd.DataFrame()
+    walk_forward_model_errors: list[str] = []
     walk_forward_error = None
     stress_results = pd.DataFrame()
     historical_stress = pd.DataFrame()
     reverse_stress = pd.DataFrame()
     macro_returns = pd.DataFrame()
     macro_errors: dict[str, str] = {}
+    weight_trace = pd.DataFrame()
+    monte_carlo_summary: dict[str, float] = {}
+    monte_carlo_outcomes = pd.Series(dtype=float)
 
     if run_macro:
         macro_returns, macro_errors = collect_macro_returns(start=start, end=end)
@@ -153,7 +178,7 @@ def analyse_user_portfolio(
         news=news,
     )
     if model_signals:
-        recommended_weights = adjust_weights_with_signals(
+        recommended_weights, weight_trace = adjust_weights_with_signals_trace(
             recommended_weights,
             candidates["minimum_volatility"],
             model_signals,
@@ -161,6 +186,17 @@ def analyse_user_portfolio(
             maximum_weight,
         )
         method = f"{method} + model signals"
+    else:
+        weight_trace = pd.DataFrame(
+            {
+                "ticker": recommended_weights.index,
+                "base_optimizer": recommended_weights.to_numpy(),
+                "after_xgboost": recommended_weights.to_numpy(),
+                "after_lstm": recommended_weights.to_numpy(),
+                "after_finbert": recommended_weights.to_numpy(),
+                "final_constrained": recommended_weights.to_numpy(),
+            }
+        )
 
     if run_walk_forward:
         try:
@@ -170,9 +206,13 @@ def analyse_user_portfolio(
                 stress_penalty=float(settings["stress_penalty"]),
                 benchmark_ticker=benchmark_ticker,
                 transaction_cost_bps=transaction_cost_bps,
+                include_ai_model=run_xgboost,
             )
             walk_forward_metrics = walk_forward.metrics
             walk_forward_returns = walk_forward.net_returns
+            walk_forward_turnover = walk_forward.turnover
+            walk_forward_transaction_costs = walk_forward.transaction_costs
+            walk_forward_model_errors = walk_forward.model_errors
         except Exception as error:  # noqa: BLE001 - keep the recommendation usable
             walk_forward_error = str(error)
 
@@ -189,17 +229,30 @@ def analyse_user_portfolio(
                 "max_drawdown": metrics.maximum_drawdown,
             }
         )
+    benchmark_metrics = calculate_metrics(returns[benchmark_ticker].dropna())
+    candidate_rows.append(
+        {
+            "method": "market_benchmark",
+            "CAGR": benchmark_metrics.cagr,
+            "volatility": benchmark_metrics.annualised_volatility,
+            "Sharpe": benchmark_metrics.sharpe_ratio,
+            "max_drawdown": benchmark_metrics.maximum_drawdown,
+        }
+    )
     candidate_metrics = pd.DataFrame(candidate_rows).set_index("method")
 
     recommended_returns = calculate_portfolio_returns(holding_returns, recommended_weights)
     if model_signals:
         adjusted_metrics = calculate_metrics(recommended_returns)
-        candidate_metrics.loc["model_adjusted"] = {
+        candidate_metrics.loc["model_adjusted_in_sample"] = {
             "CAGR": adjusted_metrics.cagr,
             "volatility": adjusted_metrics.annualised_volatility,
             "Sharpe": adjusted_metrics.sharpe_ratio,
             "max_drawdown": adjusted_metrics.maximum_drawdown,
         }
+    investor_value = compare_to_benchmark(
+        add_investor_utility_score(candidate_metrics, risk_appetite)
+    )
 
     stress_weights = recommended_weights.to_dict()
     top_holding = str(recommended_weights.idxmax())
@@ -218,15 +271,38 @@ def analyse_user_portfolio(
     ).reset_index(names="date")
     reverse_stress = reverse_stress_scenario(stress_weights, target_loss=-0.20)
 
+    concentration_metrics = calculate_concentration_metrics(stress_weights)
+    if run_monte_carlo:
+        monte_carlo_outcomes = pd.Series(
+            simulate_portfolio(
+                holding_returns,
+                stress_weights,
+                horizon_days=monte_carlo_horizon_days,
+                simulations=monte_carlo_simulations,
+            ),
+            name="simulated_return",
+        )
+        monte_carlo_summary = simulation_summary(
+            monte_carlo_outcomes.to_numpy(),
+            loss_threshold=monte_carlo_loss_threshold,
+            horizon_days=monte_carlo_horizon_days,
+        )
+
     performance_metrics = calculate_metrics(recommended_returns)
     risk_metrics = calculate_risk_metrics(recommended_returns)
     display_names = {ticker: name for name, ticker in name_to_ticker.items()}
+    latest_prices = prices.loc[:, holding_tickers].ffill().iloc[-1]
+    estimated_shares = (recommended_weights * amount_inr / latest_prices).fillna(0.0).floordiv(1.0)
+    estimated_cost = estimated_shares * latest_prices
     allocation = pd.DataFrame(
         {
             "stock": [display_names[ticker] for ticker in recommended_weights.index],
             "ticker": recommended_weights.index,
             "weight": recommended_weights.to_numpy(),
             "amount_inr": recommended_weights.to_numpy() * amount_inr,
+            "latest_price": latest_prices.reindex(recommended_weights.index).to_numpy(),
+            "estimated_shares": estimated_shares.reindex(recommended_weights.index).to_numpy(),
+            "estimated_cost_inr": estimated_cost.reindex(recommended_weights.index).to_numpy(),
         }
     ).sort_values("weight", ascending=False, ignore_index=True)
     return InteractiveAnalysis(
@@ -246,6 +322,9 @@ def analyse_user_portfolio(
         model_errors=model_errors,
         walk_forward_metrics=walk_forward_metrics,
         walk_forward_returns=walk_forward_returns,
+        walk_forward_turnover=walk_forward_turnover,
+        walk_forward_transaction_costs=walk_forward_transaction_costs,
+        walk_forward_model_errors=walk_forward_model_errors,
         walk_forward_error=walk_forward_error,
         stress_results=stress_results,
         historical_stress=historical_stress,
@@ -253,4 +332,9 @@ def analyse_user_portfolio(
         factor_snapshot=factor_snapshot,
         macro_returns=macro_returns,
         macro_errors=macro_errors,
+        weight_trace=weight_trace,
+        concentration_metrics=concentration_metrics,
+        investor_value=investor_value,
+        monte_carlo_summary=monte_carlo_summary,
+        monte_carlo_outcomes=monte_carlo_outcomes,
     )
