@@ -62,11 +62,20 @@ def run_pipeline() -> None:
             st.code(result.stderr)
 
 
-st.set_page_config(page_title="PRISM-X", layout="wide")
-st.title("PRISM-X — Portfolio Risk & Resilience Engine")
-st.caption("Historical and model-based analysis. Results are not investment guarantees.")
+st.set_page_config(
+    page_title="PRISM-X | Portfolio Risk & Resilience",
+    page_icon=":material/monitoring:",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+st.title("PRISM-X — Portfolio Risk & Resilience Engine", icon=":material/monitoring:")
+st.caption(
+    "Decision-support analytics for portfolio construction, risk diagnostics and model evidence. "
+    "Historical and model-based analysis; results are not investment guarantees."
+)
 
-st.sidebar.header("Analyse a portfolio")
+st.sidebar.header("Analyse a portfolio", icon=":material/account_balance_wallet:")
+st.sidebar.caption("Enter your investment brief, then run one reproducible analysis.")
 amount_inr = st.sidebar.number_input(
     "Portfolio amount (INR)",
     min_value=1_000.0,
@@ -84,7 +93,7 @@ risk_appetite = st.sidebar.selectbox(
     index=1,
 )
 history_years = st.sidebar.slider("History (years)", min_value=3, max_value=10, value=5)
-st.sidebar.subheader("Optional AI models")
+st.sidebar.subheader("AI signals", icon=":material/psychology:")
 run_xgboost = st.sidebar.checkbox(
     "XGBoost loss-risk model",
     help="Estimates the probability of a severe loss over the next 20 trading days.",
@@ -139,7 +148,11 @@ monte_carlo_loss_threshold = st.sidebar.slider(
     format="%.0f%%",
 )
 
-if st.sidebar.button("Analyse Portfolio", type="primary"):
+if st.sidebar.button(
+    "Analyse portfolio",
+    type="primary",
+    icon=":material/play_arrow:",
+):
     entered_stocks = [value.strip() for value in stock_text.replace(",", "\n").splitlines()]
     with st.spinner("Downloading data and optimising the portfolio..."):
         try:
@@ -197,41 +210,44 @@ if interactive_error:
 
 if interactive_analysis is not None:
     result = interactive_analysis
-    st.subheader("Recommended portfolio")
+    st.header("Recommended portfolio", icon=":material/verified:")
     st.write(
         f"Risk appetite: **{result.risk_appetite.title()}** · "
         f"Selected objective: **{result.recommended_method.replace('_', ' ').title()}**"
     )
     st.download_button(
-        "Download complete analysis report (HTML)",
+        "Download analysis report",
         data=build_html_report(result),
         file_name="prismx_complete_analysis_report.html",
         mime="text/html",
+        icon=":material/download:",
         help="Includes inputs, ticker resolution, recommended weights, ratios, risk, stress tests, model evidence, methodology and interpretation. Open it in a browser and use Print > Save as PDF if needed.",
     )
-    metrics = st.columns(5)
-    metrics[0].metric("CAGR", f"{result.performance_metrics.cagr:.2%}")
-    metrics[1].metric("Volatility", f"{result.performance_metrics.annualised_volatility:.2%}")
-    metrics[2].metric("Sharpe", f"{result.performance_metrics.sharpe_ratio:.2f}")
-    metrics[3].metric("Max drawdown", f"{result.performance_metrics.maximum_drawdown:.2%}")
-    metrics[4].metric("95% Expected Shortfall", f"{result.risk_metrics.historical_expected_shortfall:.2%}")
+    with st.container(border=True):
+        metrics = st.columns(5)
+        metrics[0].metric("CAGR", f"{result.performance_metrics.cagr:.2%}")
+        metrics[1].metric("Volatility", f"{result.performance_metrics.annualised_volatility:.2%}")
+        metrics[2].metric("Sharpe", f"{result.performance_metrics.sharpe_ratio:.2f}")
+        metrics[3].metric("Max drawdown", f"{result.performance_metrics.maximum_drawdown:.2%}")
+        metrics[4].metric("95% Expected Shortfall", f"{result.risk_metrics.historical_expected_shortfall:.2%}")
 
-    st.subheader("Resolved securities")
+    st.subheader("Resolved securities", icon=":material/link:")
     resolved = pd.DataFrame(
         [{"stock_name": name, "resolved_ticker": ticker} for name, ticker in result.name_to_ticker.items()]
     )
     st.dataframe(resolved, width="stretch", hide_index=True)
-    st.subheader("Data health")
-    health_columns = st.columns(4)
-    health_columns[0].metric("Price observations", f"{result.performance_metrics.observations:,}")
-    health_columns[1].metric("Data start", result.data_start)
-    health_columns[2].metric("Data end", result.data_end)
-    health_columns[3].metric("Benchmark", result.benchmark_ticker)
+    st.subheader("Data health", icon=":material/health_and_safety:")
+    with st.container(border=True):
+        health_columns = st.columns(4)
+        health_columns[0].metric("Price observations", f"{result.performance_metrics.observations:,}")
+        health_columns[1].metric("Data start", result.data_start)
+        health_columns[2].metric("Data end", result.data_end)
+        health_columns[3].metric("Benchmark", result.benchmark_ticker)
     st.caption(
         "All model and optimisation results use the resolved securities and the displayed historical period. Provider failures are shown explicitly rather than replaced with invented values."
     )
 
-    st.subheader("Suggested allocations")
+    st.subheader("Suggested allocations", icon=":material/pie_chart:")
     st.dataframe(
         result.allocation.style.format(
             {
@@ -250,7 +266,7 @@ if interactive_analysis is not None:
         y_label="Weight",
         alt="Recommended portfolio weights by stock",
     )
-    st.subheader("Optimisation method comparison")
+    st.subheader("Optimisation method comparison", icon=":material/compare_arrows:")
     st.dataframe(
         result.candidate_metrics.style.format(
             {
@@ -267,7 +283,7 @@ if interactive_analysis is not None:
         width="stretch",
     )
 
-    st.subheader("Investor value comparison")
+    st.subheader("Investor value comparison", icon=":material/insights:")
     st.caption(
         "The utility score is a transparent historical comparison proxy that penalises volatility and drawdown according to the selected risk appetite. It is not a return guarantee."
     )
@@ -284,7 +300,7 @@ if interactive_analysis is not None:
         width="stretch",
     )
 
-    st.subheader("Why these weights?")
+    st.subheader("Why these weights?", icon=":material/auto_graph:")
     st.caption(
         "Each column shows how the constrained optimiser was adjusted by the available model signals. An unchanged column means that model was not selected or produced no usable signal."
     )
@@ -302,7 +318,7 @@ if interactive_analysis is not None:
         hide_index=True,
     )
 
-    st.subheader("Portfolio concentration")
+    st.subheader("Portfolio concentration", icon=":material/donut_large:")
     concentration = getattr(result, "concentration_metrics", {})
     concentration_columns = st.columns(4)
     concentration_columns[0].metric("HHI", f"{concentration.get('hhi', 0.0):.3f}")
@@ -317,7 +333,7 @@ if interactive_analysis is not None:
     )
 
     if not result.walk_forward_metrics.empty:
-        st.subheader("Out-of-sample walk-forward comparison")
+        st.subheader("Out-of-sample walk-forward comparison", icon=":material/timeline:")
         st.caption(
             "Weights are learned from earlier data and tested on the next unseen period. "
             "Transaction costs are included at each rebalance."
@@ -353,7 +369,7 @@ if interactive_analysis is not None:
     if result.walk_forward_error:
         st.warning(f"Walk-forward validation was not completed: {result.walk_forward_error}")
 
-    st.subheader("Stress testing")
+    st.subheader("Stress testing", icon=":material/bolt:")
     st.caption("Hypothetical shocks and the worst observed portfolio days show how the recommendation can fail.")
     stress_columns = st.columns(2)
     with stress_columns[0]:
@@ -377,7 +393,7 @@ if interactive_analysis is not None:
     st.write("Worst observed portfolio days")
     st.dataframe(result.historical_stress, width="stretch", hide_index=True)
 
-    st.subheader("Factor and market exposure snapshot")
+    st.subheader("Factor and market exposure snapshot", icon=":material/monitoring:")
     st.caption("Recent momentum, volatility, beta, correlation and drawdown are calculated from the selected history.")
     st.dataframe(
         result.factor_snapshot.style.format(
@@ -410,7 +426,7 @@ if interactive_analysis is not None:
         st.warning(f"Macro factor unavailable — {macro_name}: {macro_error}")
 
     if getattr(result, "monte_carlo_summary", {}):
-        st.subheader("Monte Carlo simulation")
+        st.subheader("Monte Carlo simulation", icon=":material/casino:")
         st.caption(
             "A reproducible parametric simulation based on historical moments. It is a scenario tool, not a forecast."
         )
@@ -449,7 +465,7 @@ if interactive_analysis is not None:
         )
 
     if result.model_signals or result.model_errors:
-        st.subheader("Model evidence centre")
+        st.subheader("Model evidence centre", icon=":material/science:")
         overall_validation = result.model_signals.get("overall_validation")
         if overall_validation:
             overall_columns = st.columns(2)
@@ -554,7 +570,7 @@ if interactive_analysis is not None:
                 )
         for model_name, error in result.model_errors.items():
             st.warning(f"{model_name.title()} was not used: {error}")
-    st.divider()
+    st.space("medium")
 
 summary = load_json("pipeline_summary.json")
 # Older pipeline runs did not include performance metrics in this file. Use the
@@ -563,43 +579,48 @@ risk = summary.get("performance_metrics") or load_json("portfolio_metrics.json")
 simulation = summary.get("simulation", {})
 
 with st.sidebar:
-    st.header("Controls")
-    if st.button("Run / refresh analysis", type="primary"):
+    st.header("Application controls", icon=":material/tune:")
+    if st.button(
+        "Run / refresh analysis",
+        type="primary",
+        icon=":material/refresh:",
+    ):
         run_pipeline()
 
 if not summary:
-    st.warning("No pipeline results are available yet.")
+    st.warning("No pipeline results are available yet.", icon=":material/hourglass_empty:")
     st.write("Run the core analysis to download or load prices, calculate risk, optimise weights and create the dashboard tables.")
-    if st.button("Run analysis now", type="primary"):
+    if st.button("Run analysis now", type="primary", icon=":material/play_arrow:"):
         run_pipeline()
 else:
-    st.subheader("Portfolio overview")
-    columns = st.columns(6)
-    columns[0].metric("Historical CAGR", f"{risk.get('cagr', 0):.2%}")
-    columns[1].metric("Volatility", f"{risk.get('annualised_volatility', 0):.2%}")
-    columns[2].metric("Sharpe", f"{risk.get('sharpe_ratio', 0):.2f}")
-    columns[3].metric("Max drawdown", f"{risk.get('maximum_drawdown', 0):.2%}")
-    simulation_horizon = int(simulation.get("horizon_days", 252))
-    columns[4].metric(
-        f"Probability of any loss over {simulation_horizon} days",
-        f"{simulation.get('probability_loss', 0):.2%}",
-    )
-    columns[5].metric(
-        f"Probability of loss beyond {abs(float(simulation.get('loss_threshold', -0.20))):.0%}",
-        f"{simulation.get('probability_beyond_loss_threshold', 0):.2%}",
-    )
+    st.subheader("Portfolio overview", icon=":material/dashboard:")
+    with st.container(border=True):
+        columns = st.columns(6)
+        columns[0].metric("Historical CAGR", f"{risk.get('cagr', 0):.2%}")
+        columns[1].metric("Volatility", f"{risk.get('annualised_volatility', 0):.2%}")
+        columns[2].metric("Sharpe", f"{risk.get('sharpe_ratio', 0):.2f}")
+        columns[3].metric("Max drawdown", f"{risk.get('maximum_drawdown', 0):.2%}")
+        simulation_horizon = int(simulation.get("horizon_days", 252))
+        columns[4].metric(
+            f"Probability of any loss over {simulation_horizon} days",
+            f"{simulation.get('probability_loss', 0):.2%}",
+        )
+        columns[5].metric(
+            f"Probability of loss beyond {abs(float(simulation.get('loss_threshold', -0.20))):.0%}",
+            f"{simulation.get('probability_beyond_loss_threshold', 0):.2%}",
+        )
 
-    st.subheader("Risk contribution")
+    st.subheader("Risk contribution", icon=":material/pie_chart:")
     contribution = load_csv("pipeline_risk_contribution.csv", index_col=0)
     if not contribution.empty:
         st.dataframe(contribution, width="stretch")
 
-    st.subheader("Backtest comparison")
+    st.subheader("Backtest comparison", icon=":material/history:")
     backtest = load_csv("pipeline_backtest_metrics.csv", index_col=0)
     if not backtest.empty:
         st.dataframe(backtest, width="stretch")
 
-    st.subheader("Interconnectedness")
+    st.subheader("Interconnectedness", icon=":material/hub:")
     network = load_json("pipeline_network_summary.json")
     if network:
         network_rows = pd.DataFrame(
@@ -621,7 +642,7 @@ else:
         )
         st.caption("Normal and stress-period correlation-network summary. Higher density or larger connected components indicate stronger interconnectedness.")
 
-    st.subheader("Regime history")
+    st.subheader("Regime history", icon=":material/multiline_chart:")
     regimes = load_csv("pipeline_regimes.csv", index_col=0)
     if not regimes.empty:
         st.dataframe(regimes.tail(100), width="stretch")
