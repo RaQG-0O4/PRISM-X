@@ -3,21 +3,21 @@
 
 [theme]
 base = "dark"
-primaryColor = "#4F8CFF"
-backgroundColor = "#0B1220"
-secondaryBackgroundColor = "#111C2E"
-codeBackgroundColor = "#111C2E"
+primaryColor = "#6E8BFF"
+backgroundColor = "#0A1020"
+secondaryBackgroundColor = "#13213A"
+codeBackgroundColor = "#101B31"
 textColor = "#E5E7EB"
-linkColor = "#71A7FF"
-borderColor = "#263A55"
+linkColor = "#8DB5FF"
+borderColor = "#2A4266"
 codeTextColor = "#CBD5E1"
 showWidgetBorder = true
 showSidebarBorder = true
 baseRadius = "8px"
 buttonRadius = "8px"
 
-font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-headingFont = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap"
+font = "'Manrope':https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap"
+headingFont = "'Manrope':https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&display=swap"
 codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
 baseFontSize = 14
 baseFontWeight = 400
@@ -36,14 +36,14 @@ violetColor = "#A78BFA"
 grayColor = "#94A3B8"
 
 chartCategoricalColors = [
-  "#60A5FA",
+  "#7C9CFF",
   "#2DD4BF",
-  "#A78BFA",
+  "#C084FC",
   "#34D399",
   "#FBBF24",
-  "#F87171",
+  "#FB7185",
   "#38BDF8",
-  "#94A3B8",
+  "#CBD5E1",
 ]
 
 chartSequentialColors = [
@@ -59,8 +59,8 @@ chartSequentialColors = [
   "#E0F2FE",
 ]
 
-dataframeBorderColor = "#263A55"
-dataframeHeaderBackgroundColor = "#17263B"
+dataframeBorderColor = "#2A4266"
+dataframeHeaderBackgroundColor = "#1A3152"
 dataframeHeaderTextColor = "#F8FAFC"
 
 [theme.sidebar]

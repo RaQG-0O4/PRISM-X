@@ -33,6 +33,79 @@ from prismx.workflow import analyse_user_portfolio
 
 REPORTS = PROJECT_ROOT / "reports" / "tables"
 
+# The picker starts empty by design.  This is only a searchable convenience
+# list; users can also type a company name or ticker that is not listed here.
+STOCK_PICKER_OPTIONS = [
+    "HDFC Bank",
+    "ICICI Bank",
+    "Reliance Industries",
+    "TCS",
+    "Infosys",
+    "Larsen & Toubro",
+    "State Bank of India",
+    "JSW Energy",
+    "Tata Power",
+    "Tata Technologies",
+    "HDFC Life",
+    "Sun Pharma",
+    "ITC",
+    "Bharti Airtel",
+    "Axis Bank",
+    "Kotak Mahindra Bank",
+]
+PRESET_PORTFOLIO = [
+    "HDFC Bank",
+    "ICICI Bank",
+    "Reliance Industries",
+    "TCS",
+    "Infosys",
+    "Larsen & Toubro",
+]
+STOCK_TICKER_HINTS = {
+    "HDFC Bank": "HDFCBANK.NS",
+    "ICICI Bank": "ICICIBANK.NS",
+    "Reliance Industries": "RELIANCE.NS",
+    "TCS": "TCS.NS",
+    "Infosys": "INFY.NS",
+    "Larsen & Toubro": "LT.NS",
+    "State Bank of India": "SBIN.NS",
+    "JSW Energy": "JSWENERGY.NS",
+    "Tata Power": "TATAPOWER.NS",
+    "Tata Technologies": "TATATECH.NS",
+    "HDFC Life": "HDFCLIFE.NS",
+    "Sun Pharma": "SUNPHARMA.NS",
+    "ITC": "ITC.NS",
+    "Bharti Airtel": "BHARTIARTL.NS",
+    "Axis Bank": "AXISBANK.NS",
+    "Kotak Mahindra Bank": "KOTAKBANK.NS",
+}
+
+
+def stock_picker_label(value: object) -> str:
+    """Show a friendly company name and ticker in the searchable picker."""
+
+    text = str(value)
+    ticker = STOCK_TICKER_HINTS.get(text)
+    return f"{text} · {ticker}" if ticker else f"{text} · search online"
+
+
+def human_label(value: object) -> str:
+    """Convert technical snake_case labels into readable dashboard labels."""
+
+    return str(value).replace("_", " ").strip().title()
+
+
+METHOD_LABELS = {
+    "minimum_volatility": "Minimum volatility",
+    "robust_minimum_volatility": "Robust minimum volatility",
+    "maximum_sharpe": "Maximum Sharpe",
+    "risk_parity": "Risk parity",
+    "resilient": "Resilient",
+    "market_benchmark": "NIFTY 50 benchmark",
+    "model_adjusted_in_sample": "Model-adjusted (in-sample)",
+    "equal_weight": "Equal weight",
+}
+
 
 def load_json(name: str) -> dict:
     path = REPORTS / name
@@ -75,18 +148,65 @@ st.caption(
     "Historical and model-based analysis; results are not investment guarantees."
 )
 
-st.sidebar.header("Analyse a portfolio", icon=":material/account_balance_wallet:")
-st.sidebar.caption("Enter your investment brief, then run one reproducible analysis.")
+st.sidebar.header("Build a portfolio", icon=":material/account_balance_wallet:")
+st.sidebar.caption("Choose your starting point, search for stocks, then run one reproducible analysis.")
 amount_inr = st.sidebar.number_input(
     "Portfolio amount (INR)",
     min_value=1_000.0,
     value=3_700_000.0,
     step=10_000.0,
 )
-stock_text = st.sidebar.text_area(
-    "Stock names or tickers",
-    value="HDFC Bank\nICICI Bank\nReliance Industries\nTCS\nInfosys\nLarsen & Toubro",
-    help="Enter one supported stock name or exchange ticker per line.",
+portfolio_mode = st.sidebar.segmented_control(
+    "Starting portfolio",
+    ["Start from scratch", "Use preset portfolio"],
+    default="Start from scratch",
+    key="portfolio_mode",
+    width="stretch",
+    help="Start from an empty portfolio or load the six-stock teaching preset.",
+)
+if portfolio_mode == "Use preset portfolio":
+    selected_stocks = st.sidebar.multiselect(
+        "Search and select stocks",
+        options=STOCK_PICKER_OPTIONS,
+        default=PRESET_PORTFOLIO,
+        format_func=stock_picker_label,
+        key="preset_stock_picker",
+        max_selections=20,
+        placeholder="Search by company name or ticker",
+        help="Search the list, remove any preset holding, or type a new name/ticker and press Enter.",
+        accept_new_options=True,
+        filter_mode="fuzzy",
+    )
+else:
+    selected_stocks = st.sidebar.multiselect(
+        "Search and select stocks",
+        options=STOCK_PICKER_OPTIONS,
+        default=[],
+        format_func=stock_picker_label,
+        key="custom_stock_picker",
+        max_selections=20,
+        placeholder="Type a company name or ticker and press Enter",
+        help="The portfolio starts empty. Search the list or add any company name/ticker supported by the market-data provider.",
+        accept_new_options=True,
+        filter_mode="fuzzy",
+    )
+
+entered_stocks = [str(value).strip() for value in selected_stocks if str(value).strip()]
+if entered_stocks:
+    st.sidebar.badge(
+        f"{len(entered_stocks)} stock{'s' if len(entered_stocks) != 1 else ''} selected",
+        icon=":material/check_circle:",
+        color="blue",
+    )
+else:
+    st.sidebar.badge(
+        "No stocks selected yet",
+        icon=":material/search:",
+        color="orange",
+    )
+st.sidebar.caption(
+    "Tip: type a company name or ticker, press Enter, and select at least two holdings. "
+    "Names are resolved to exchange tickers before analysis."
 )
 risk_appetite = st.sidebar.selectbox(
     "Risk appetite",
@@ -153,8 +273,8 @@ if st.sidebar.button(
     "Analyse portfolio",
     type="primary",
     icon=":material/play_arrow:",
+    disabled=len(entered_stocks) < 2,
 ):
-    entered_stocks = [value.strip() for value in stock_text.replace(",", "\n").splitlines()]
     with st.spinner("Downloading data and optimising the portfolio..."):
         try:
             uploaded_news = None
@@ -212,10 +332,30 @@ if interactive_error:
 if interactive_analysis is not None:
     result = interactive_analysis
     st.header("Recommended portfolio", icon=":material/verified:")
+    selected_method_label = METHOD_LABELS.get(
+        result.recommended_method,
+        human_label(result.recommended_method),
+    )
     st.write(
         f"Risk appetite: **{result.risk_appetite.title()}** · "
-        f"Selected objective: **{result.recommended_method.replace('_', ' ').title()}**"
+        f"Selected objective: **{selected_method_label}**"
     )
+    with st.container(horizontal=True, gap="small"):
+        st.badge(
+            f"{len(result.name_to_ticker)} holdings",
+            icon=":material/account_balance:",
+            color="blue",
+        )
+        st.badge(
+            f"{result.data_start} to {result.data_end}",
+            icon=":material/date_range:",
+            color="violet",
+        )
+        st.badge(
+            "Historical and model-based",
+            icon=":material/insights:",
+            color="green",
+        )
     st.download_button(
         "Download analysis report",
         data=build_html_report(result),
@@ -232,11 +372,47 @@ if interactive_analysis is not None:
         metrics[3].metric("Max drawdown", f"{result.performance_metrics.maximum_drawdown:.2%}")
         metrics[4].metric("95% Expected Shortfall", f"{result.risk_metrics.historical_expected_shortfall:.2%}")
 
+    with st.container(border=True):
+        st.subheader("At a glance", icon=":material/summarize:")
+        summary_columns = st.columns(3)
+        with summary_columns[0]:
+            st.markdown("**Decision**")
+            st.write(
+                f"The **{selected_method_label.lower()}** objective was selected for a "
+                f"**{result.risk_appetite}** risk profile."
+            )
+        with summary_columns[1]:
+            concentration = getattr(result, "concentration_metrics", {})
+            st.markdown("**Risk posture**")
+            st.write(
+                f"The historical worst drawdown was **{result.performance_metrics.maximum_drawdown:.2%}**. "
+                f"The largest position is **{concentration.get('largest_holding_weight', 0.0):.2%}**."
+            )
+        with summary_columns[2]:
+            overall_validation = result.model_signals.get("overall_validation")
+            evidence_text = (
+                f"Evidence score **{float(overall_validation['score_pct']):.1f}/100**"
+                if overall_validation
+                else "Historical risk evidence"
+            )
+            validation_text = (
+                "Walk-forward results available."
+                if not result.walk_forward_metrics.empty
+                else "Walk-forward was not run."
+            )
+            st.markdown("**Evidence**")
+            st.write(f"{evidence_text}. {validation_text}")
+
     st.subheader("Resolved securities", icon=":material/link:")
     resolved = pd.DataFrame(
-        [{"stock_name": name, "resolved_ticker": ticker} for name, ticker in result.name_to_ticker.items()]
+        [{"Entered name": name, "Resolved ticker": ticker} for name, ticker in result.name_to_ticker.items()]
     )
-    st.dataframe(resolved, width="stretch", hide_index=True)
+    st.dataframe(
+        resolved,
+        width="stretch",
+        hide_index=True,
+        alt="Entered stock names and their resolved market tickers",
+    )
     st.subheader("Data health", icon=":material/health_and_safety:")
     with st.container(border=True):
         health_columns = st.columns(4)
@@ -256,75 +432,139 @@ if interactive_analysis is not None:
         )
 
     st.subheader("Suggested allocations", icon=":material/pie_chart:")
+    allocation_display = result.allocation.rename(
+        columns={
+            "stock": "Stock",
+            "ticker": "Ticker",
+            "weight": "Weight",
+            "amount_inr": "Amount (INR)",
+            "latest_price": "Latest price",
+            "estimated_shares": "Estimated shares",
+            "estimated_cost_inr": "Estimated cost (INR)",
+        }
+    )
     st.dataframe(
-        result.allocation.style.format(
+        allocation_display.style.format(
             {
-                "weight": "{:.2%}",
-                "amount_inr": "INR {:,.0f}",
-                "latest_price": "INR {:,.2f}",
-                "estimated_shares": "{:,.0f}",
-                "estimated_cost_inr": "INR {:,.0f}",
+                "Weight": "{:.2%}",
+                "Amount (INR)": "INR {:,.0f}",
+                "Latest price": "INR {:,.2f}",
+                "Estimated shares": "{:,.0f}",
+                "Estimated cost (INR)": "INR {:,.0f}",
             }
         ),
         width="stretch",
         hide_index=True,
+        alt="Recommended stock allocations with weights and estimated investment amounts",
     )
     st.bar_chart(
         result.allocation.set_index("stock")["weight"],
         y_label="Weight",
         alt="Recommended portfolio weights by stock",
     )
-    st.subheader("Optimisation method comparison", icon=":material/compare_arrows:")
-    st.dataframe(
-        result.candidate_metrics.style.format(
-            {
-                "CAGR": "{:.2%}",
-                "volatility": "{:.2%}",
-                "Sharpe": "{:.2f}",
-                "max_drawdown": "{:.2%}",
-                "utility_score": "{:.4f}",
-                "CAGR_vs_benchmark": "{:.2%}",
-                "volatility_vs_benchmark": "{:.2%}",
-                "drawdown_vs_benchmark": "{:.2%}",
+    with st.expander("Optimisation method comparison", icon=":material/compare_arrows:"):
+        candidate_display = result.candidate_metrics.copy()
+        candidate_display.index = [
+            METHOD_LABELS.get(value, human_label(value)) for value in candidate_display.index
+        ]
+        candidate_display.index.name = "Method"
+        candidate_display = candidate_display.reset_index()
+        candidate_display = candidate_display.rename(
+            columns={
+                "CAGR": "CAGR",
+                "volatility": "Volatility",
+                "Sharpe": "Sharpe",
+                "max_drawdown": "Max drawdown",
+                "utility_score": "Utility score",
+                "CAGR_vs_benchmark": "CAGR vs benchmark",
+                "volatility_vs_benchmark": "Volatility vs benchmark",
+                "drawdown_vs_benchmark": "Drawdown vs benchmark",
             }
-        ),
-        width="stretch",
-    )
+        )
+        st.dataframe(
+            candidate_display.style.format(
+                {
+                    "CAGR": "{:.2%}",
+                    "Volatility": "{:.2%}",
+                    "Sharpe": "{:.2f}",
+                    "Max drawdown": "{:.2%}",
+                    "Utility score": "{:.4f}",
+                    "CAGR vs benchmark": "{:.2%}",
+                    "Volatility vs benchmark": "{:.2%}",
+                    "Drawdown vs benchmark": "{:.2%}",
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+            alt="Comparison of portfolio optimisation methods",
+        )
 
-    st.subheader("Investor value comparison", icon=":material/insights:")
-    st.caption(
-        "The utility score is a transparent historical comparison proxy that penalises volatility and drawdown according to the selected risk appetite. It is not a return guarantee."
-    )
-    st.dataframe(
-        getattr(result, "investor_value", pd.DataFrame()).style.format(
-            {
-                "utility_score": "{:.4f}",
-                "utility_gap_to_best": "{:.4f}",
-                "CAGR_vs_benchmark": "{:.2%}",
-                "volatility_vs_benchmark": "{:.2%}",
-                "drawdown_vs_benchmark": "{:.2%}",
-            }
-        ),
-        width="stretch",
-    )
+    with st.expander("Investor value comparison", icon=":material/insights:"):
+        st.caption(
+            "The utility score is a transparent historical comparison proxy that penalises volatility and drawdown according to the selected risk appetite. It is not a return guarantee."
+        )
+        investor_display = getattr(result, "investor_value", pd.DataFrame()).copy()
+        if not investor_display.empty:
+            investor_display.index = [
+                METHOD_LABELS.get(value, human_label(value)) for value in investor_display.index
+            ]
+            investor_display.index.name = "Method"
+            investor_display = investor_display.reset_index()
+            investor_display = investor_display.rename(
+                columns={
+                    "utility_score": "Utility score",
+                    "utility_rank": "Utility rank",
+                    "utility_gap_to_best": "Gap to best",
+                    "CAGR_vs_benchmark": "CAGR vs benchmark",
+                    "volatility_vs_benchmark": "Volatility vs benchmark",
+                    "drawdown_vs_benchmark": "Drawdown vs benchmark",
+                }
+            )
+        st.dataframe(
+            investor_display.style.format(
+                {
+                    "Utility score": "{:.4f}",
+                    "Gap to best": "{:.4f}",
+                    "CAGR vs benchmark": "{:.2%}",
+                    "Volatility vs benchmark": "{:.2%}",
+                    "Drawdown vs benchmark": "{:.2%}",
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+            alt="Historical investor utility comparison by optimisation method",
+        )
 
-    st.subheader("Why these weights?", icon=":material/auto_graph:")
-    st.caption(
-        "Each column shows how the constrained optimiser was adjusted by the available model signals. An unchanged column means that model was not selected or produced no usable signal."
-    )
-    st.dataframe(
-        getattr(result, "weight_trace", pd.DataFrame()).style.format(
-            {
-                "base_optimizer": "{:.2%}",
-                "after_xgboost": "{:.2%}",
-                "after_lstm": "{:.2%}",
-                "after_finbert": "{:.2%}",
-                "final_constrained": "{:.2%}",
-            }
-        ),
-        width="stretch",
-        hide_index=True,
-    )
+    with st.expander("Why these weights?", icon=":material/auto_graph:"):
+        st.caption(
+            "Each column shows how the constrained optimiser was adjusted by the available model signals. An unchanged column means that model was not selected or produced no usable signal."
+        )
+        weight_display = getattr(result, "weight_trace", pd.DataFrame()).copy()
+        if not weight_display.empty:
+            weight_display.index.name = "Ticker"
+            weight_display = weight_display.reset_index().rename(
+                columns={
+                    "base_optimizer": "Base optimiser",
+                    "after_xgboost": "After XGBoost",
+                    "after_lstm": "After LSTM",
+                    "after_finbert": "After FinBERT",
+                    "final_constrained": "Final constrained",
+                }
+            )
+        st.dataframe(
+            weight_display.style.format(
+                {
+                    "Base optimiser": "{:.2%}",
+                    "After XGBoost": "{:.2%}",
+                    "After LSTM": "{:.2%}",
+                    "After FinBERT": "{:.2%}",
+                    "Final constrained": "{:.2%}",
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+            alt="Step-by-step changes from base optimiser weights to final constrained weights",
+        )
 
     st.subheader("Portfolio concentration", icon=":material/donut_large:")
     concentration = getattr(result, "concentration_metrics", {})
@@ -346,8 +586,11 @@ if interactive_analysis is not None:
             "Weights are learned from earlier data and tested on the next unseen period. "
             "Transaction costs are included at each rebalance."
         )
+        walk_forward_display = result.walk_forward_metrics.copy()
+        if walk_forward_display.index.name:
+            walk_forward_display.index.name = human_label(walk_forward_display.index.name)
         st.dataframe(
-            result.walk_forward_metrics.style.format(
+            walk_forward_display.style.format(
                 {
                     "total_return": "{:.2%}",
                     "cagr": "{:.2%}",
@@ -358,6 +601,7 @@ if interactive_analysis is not None:
                 }
             ),
             width="stretch",
+            alt="Out-of-sample walk-forward portfolio comparison",
         )
         wealth = (1.0 + result.walk_forward_returns).cumprod()
         st.line_chart(
@@ -393,6 +637,7 @@ if interactive_analysis is not None:
             ),
             width="stretch",
             hide_index=True,
+            alt="Hypothetical portfolio stress scenarios",
         )
     with stress_columns[1]:
         st.write("Reverse stress: shocks required to reach -20%")
@@ -402,26 +647,48 @@ if interactive_analysis is not None:
             ),
             width="stretch",
             hide_index=True,
+            alt="Reverse stress shocks required to reach a twenty percent loss",
         )
-    st.write("Worst observed portfolio days")
-    st.dataframe(result.historical_stress, width="stretch", hide_index=True)
+    with st.expander("Worst observed portfolio days", icon=":material/event_busy:"):
+        st.dataframe(
+            result.historical_stress,
+            width="stretch",
+            hide_index=True,
+            alt="Worst historical portfolio days and contributing security returns",
+        )
 
     st.subheader("Factor and market exposure snapshot", icon=":material/monitoring:")
     st.caption("Recent momentum, volatility, beta, correlation and drawdown are calculated from the selected history.")
+    factor_display = result.factor_snapshot.copy()
+    factor_display.index.name = "Ticker"
+    factor_display = factor_display.reset_index().rename(
+        columns={
+            "momentum_1m": "Momentum (1 month)",
+            "momentum_3m": "Momentum (3 months)",
+            "momentum_12m": "Momentum (12 months)",
+            "volatility_1m": "Volatility (1 month)",
+            "beta_to_market": "Beta to market",
+            "correlation_to_market": "Correlation to market",
+            "maximum_drawdown": "Maximum drawdown",
+            "negative_days_3m": "Negative days (3 months)",
+        }
+    )
     st.dataframe(
-        result.factor_snapshot.style.format(
+        factor_display.style.format(
             {
-                "momentum_1m": "{:.2%}",
-                "momentum_3m": "{:.2%}",
-                "momentum_12m": "{:.2%}",
-                "volatility_1m": "{:.2%}",
-                "beta_to_market": "{:.2f}",
-                "correlation_to_market": "{:.2f}",
-                "maximum_drawdown": "{:.2%}",
-                "negative_days_3m": "{:.2%}",
+                "Momentum (1 month)": "{:.2%}",
+                "Momentum (3 months)": "{:.2%}",
+                "Momentum (12 months)": "{:.2%}",
+                "Volatility (1 month)": "{:.2%}",
+                "Beta to market": "{:.2f}",
+                "Correlation to market": "{:.2f}",
+                "Maximum drawdown": "{:.2%}",
+                "Negative days (3 months)": "{:.2%}",
             }
         ),
         width="stretch",
+        hide_index=True,
+        alt="Stock momentum, volatility and market exposure factors",
     )
     if not result.macro_returns.empty:
         st.write("Macro-factor snapshot")
@@ -625,76 +892,46 @@ if interactive_analysis is not None:
     st.space("medium")
 
 summary = load_json("pipeline_summary.json")
-# Older pipeline runs did not include performance metrics in this file. Use the
-# existing analytics report until the pipeline is refreshed.
-risk = summary.get("performance_metrics") or load_json("portfolio_metrics.json")
-simulation = summary.get("simulation", {})
 
 with st.sidebar:
     st.header("Application controls", icon=":material/tune:")
+    st.caption("Manage the current interactive run or refresh the saved teaching snapshot.")
     if st.button(
-        "Run / refresh analysis",
-        type="primary",
+        "Clear current analysis",
+        icon=":material/delete_sweep:",
+        disabled=interactive_analysis is None and not interactive_error,
+        help="Remove the current recommendation and return to the empty start screen.",
+    ):
+        st.session_state.pop("interactive_analysis", None)
+        st.session_state.pop("interactive_error", None)
+        st.rerun()
+    if st.button(
+        "Refresh saved preset run",
         icon=":material/refresh:",
+        help="Refreshes the separate reproducible pipeline snapshot. It does not choose holdings for your current analysis.",
     ):
         run_pipeline()
 
-if not summary and interactive_analysis is None:
-    st.warning("No pipeline results are available yet.", icon=":material/hourglass_empty:")
-    st.write("Run the core analysis to download or load prices, calculate risk, optimise weights and create the dashboard tables.")
-    if st.button("Run analysis now", type="primary", icon=":material/play_arrow:"):
-        run_pipeline()
-elif summary and interactive_analysis is None:
-    st.subheader("Portfolio overview", icon=":material/dashboard:")
+if interactive_analysis is None:
+    st.header("Start a new analysis", icon=":material/add_chart:")
     with st.container(border=True):
-        columns = st.columns(6)
-        columns[0].metric("Historical CAGR", f"{risk.get('cagr', 0):.2%}")
-        columns[1].metric("Volatility", f"{risk.get('annualised_volatility', 0):.2%}")
-        columns[2].metric("Sharpe", f"{risk.get('sharpe_ratio', 0):.2f}")
-        columns[3].metric("Max drawdown", f"{risk.get('maximum_drawdown', 0):.2%}")
-        simulation_horizon = int(simulation.get("horizon_days", 252))
-        columns[4].metric(
-            f"Probability of any loss over {simulation_horizon} days",
-            f"{simulation.get('probability_loss', 0):.2%}",
+        st.subheader("Your portfolio starts empty", icon=":material/search:")
+        st.write(
+            "Use the sidebar to search for company names or exchange tickers. "
+            "Choose at least two holdings, set your risk appetite, and run the analysis."
         )
-        columns[5].metric(
-            f"Probability of loss beyond {abs(float(simulation.get('loss_threshold', -0.20))):.0%}",
-            f"{simulation.get('probability_beyond_loss_threshold', 0):.2%}",
+        start_columns = st.columns(3)
+        with start_columns[0]:
+            st.markdown("**1 · Choose a starting point**")
+            st.caption("Build from scratch or load the preset six-stock teaching portfolio.")
+        with start_columns[1]:
+            st.markdown("**2 · Search and review**")
+            st.caption("Type a company name or ticker and press Enter. The resolved exchange ticker is shown before the results.")
+        with start_columns[2]:
+            st.markdown("**3 · Run the evidence-led analysis**")
+            st.caption("Review allocation, risk, stress tests, validation and model evidence in one report.")
+    if summary:
+        st.caption(
+            "A separate saved teaching snapshot is available in the project, but it is not loaded as your current portfolio. "
+            "Run a new analysis above to create a fresh recommendation."
         )
-
-    st.subheader("Risk contribution", icon=":material/pie_chart:")
-    contribution = load_csv("pipeline_risk_contribution.csv", index_col=0)
-    if not contribution.empty:
-        st.dataframe(contribution, width="stretch")
-
-    st.subheader("Backtest comparison", icon=":material/history:")
-    backtest = load_csv("pipeline_backtest_metrics.csv", index_col=0)
-    if not backtest.empty:
-        st.dataframe(backtest, width="stretch")
-
-    st.subheader("Interconnectedness", icon=":material/hub:")
-    network = load_json("pipeline_network_summary.json")
-    if network:
-        network_rows = pd.DataFrame(
-            [{"period": period, **values} for period, values in network.items()]
-        )
-        st.dataframe(
-            network_rows.style.format(
-                {
-                    "nodes": "{:.0f}",
-                    "edges": "{:.0f}",
-                    "density": "{:.2%}",
-                    "connected_components": "{:.0f}",
-                    "largest_component_share": "{:.2%}",
-                    "average_clustering": "{:.2f}",
-                }
-            ),
-            width="stretch",
-            hide_index=True,
-        )
-        st.caption("Normal and stress-period correlation-network summary. Higher density or larger connected components indicate stronger interconnectedness.")
-
-    st.subheader("Regime history", icon=":material/multiline_chart:")
-    regimes = load_csv("pipeline_regimes.csv", index_col=0)
-    if not regimes.empty:
-        st.dataframe(regimes.tail(100), width="stretch")
