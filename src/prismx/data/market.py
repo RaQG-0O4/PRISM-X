@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 import pandas as pd
 
@@ -43,6 +43,32 @@ KNOWN_INDIAN_TICKERS: dict[str, str] = {
     "kotak bank": "KOTAKBANK.NS",
     "nifty 50": "^NSEI",
     "nifty": "^NSEI",
+}
+
+# Yahoo Finance symbols for the price of one unit of the foreign currency in
+# INR.  USD/INR is exposed by Yahoo as INR=X and is already used by PRISM-X's
+# macro-factor collector.
+FX_TICKERS_TO_INR: dict[str, str] = {
+    "USD": "INR=X",
+    "EUR": "EURINR=X",
+    "GBP": "GBPINR=X",
+    "CHF": "CHFINR=X",
+    "JPY": "JPYINR=X",
+    "CNY": "CNYINR=X",
+    "HKD": "HKDINR=X",
+    "SGD": "SGDINR=X",
+    "AUD": "AUDINR=X",
+    "CAD": "CADINR=X",
+    "NZD": "NZDINR=X",
+    "KRW": "KRWINR=X",
+    "ZAR": "ZARINR=X",
+}
+
+CURRENCY_ALIASES = {
+    "GBp": "GBP",
+    "GBX": "GBP",
+    "ILA": "ILS",
+    "ZAc": "ZAR",
 }
 
 
@@ -86,6 +112,58 @@ def resolve_portfolio_tickers(portfolio: PortfolioInput) -> dict[str, str]:
         holding.name: resolve_ticker(holding.name, holding.ticker)
         for holding in portfolio.holdings
     }
+
+
+def normalise_currency(currency: object) -> str | None:
+    """Return a standard ISO-like currency code from provider metadata."""
+
+    if currency is None or pd.isna(currency):
+        return None
+    value = str(currency).strip()
+    if not value:
+        return None
+    return CURRENCY_ALIASES.get(value, value.upper())
+
+
+def infer_currency(ticker: str) -> str | None:
+    """Infer common exchange currencies when provider metadata is absent."""
+
+    symbol = str(ticker).strip().upper()
+    if symbol.endswith((".NS", ".BO")) or symbol == "^NSEI":
+        return "INR"
+    suffix_currency = {
+        ".L": "GBP",
+        ".DE": "EUR",
+        ".PA": "EUR",
+        ".AS": "EUR",
+        ".MI": "EUR",
+        ".MC": "EUR",
+        ".BR": "EUR",
+        ".SW": "CHF",
+        ".ST": "SEK",
+        ".CO": "DKK",
+        ".OL": "NOK",
+        ".HE": "EUR",
+        ".VI": "EUR",
+        ".HK": "HKD",
+        ".T": "JPY",
+        ".SS": "CNY",
+        ".SZ": "CNY",
+        ".KS": "KRW",
+        ".AX": "AUD",
+        ".TO": "CAD",
+    }
+    for suffix, currency in suffix_currency.items():
+        if symbol.endswith(suffix):
+            return currency
+    # Bare Yahoo equity symbols normally refer to US exchanges.
+    if "." not in symbol and not symbol.startswith("^"):
+        return "USD"
+    return None
+
+
+def _currency_from_metadata(ticker: str, metadata: Mapping[str, object]) -> str | None:
+    return normalise_currency(metadata.get("currency")) or infer_currency(ticker)
 
 
 def search_ticker_online(name: str) -> str:
@@ -179,7 +257,18 @@ def download_adjusted_close(
     start: str | date,
     end: str | date | None = None,
 ) -> pd.DataFrame:
-    """Download adjusted daily close prices using yfinance.
+    """Download adjusted daily close prices using yfinance."""
+
+    prices, _ = download_adjusted_close_with_currency(tickers, start=start, end=end)
+    return prices
+
+
+def download_adjusted_close_with_currency(
+    tickers: Iterable[str],
+    start: str | date,
+    end: str | date | None = None,
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Download adjusted prices and the native currency for each ticker.
 
     The provider is isolated in this function so it can later be replaced by
     a licensed or institutional data source without changing analytics code.
@@ -197,11 +286,13 @@ def download_adjusted_close(
         raise MarketDataError("At least one ticker is required")
 
     series_by_ticker: dict[str, pd.Series] = {}
+    currencies: dict[str, str] = {}
     failures: dict[str, str] = {}
 
     for ticker in unique_tickers:
         try:
-            history = yf.Ticker(ticker).history(
+            ticker_object = yf.Ticker(ticker)
+            history = ticker_object.history(
                 start=start,
                 end=end,
                 auto_adjust=True,
@@ -214,6 +305,12 @@ def download_adjusted_close(
             series = history["Close"].rename(ticker)
             series.index = pd.to_datetime(series.index).tz_localize(None)
             series_by_ticker[ticker] = series
+            metadata = ticker_object.get_history_metadata()
+            currency = _currency_from_metadata(ticker, metadata)
+            if currency is None:
+                failures[ticker] = "price currency was not available from the market-data provider"
+                continue
+            currencies[ticker] = currency
         except Exception as error:  # noqa: BLE001 - report provider failures together
             failures[ticker] = str(error)
 
@@ -221,7 +318,57 @@ def download_adjusted_close(
         details = "; ".join(f"{ticker}: {reason}" for ticker, reason in failures.items())
         raise MarketDataError(f"Market-data download failed: {details}")
 
-    return clean_price_frame(pd.concat(series_by_ticker.values(), axis=1))
+    return clean_price_frame(pd.concat(series_by_ticker.values(), axis=1)), currencies
+
+
+def convert_prices_to_inr(
+    prices: pd.DataFrame,
+    currencies: Mapping[str, str],
+    start: str | date,
+    end: str | date | None = None,
+) -> tuple[pd.DataFrame, dict[str, float]]:
+    """Convert a multi-currency price table to INR using daily FX history.
+
+    The conversion happens before returns are calculated, so an INR investor's
+    performance includes both the asset move and the foreign-exchange move.
+    The returned FX dictionary contains the latest aligned INR conversion rate
+    for each ticker and is intended for dashboard/report transparency.
+    """
+
+    missing_currency = [ticker for ticker in prices.columns if ticker not in currencies]
+    if missing_currency:
+        raise MarketDataError(
+            "Currency metadata is missing for: " + ", ".join(map(str, missing_currency))
+        )
+
+    converted = prices.copy()
+    latest_fx_rates: dict[str, float] = {}
+    fx_series_cache: dict[str, pd.Series] = {}
+
+    for ticker in prices.columns:
+        currency = normalise_currency(currencies[ticker])
+        if currency is None:
+            raise MarketDataError(f"Currency metadata is invalid for {ticker}")
+        if currency == "INR":
+            rate = pd.Series(1.0, index=prices.index, name=ticker)
+        else:
+            fx_ticker = FX_TICKERS_TO_INR.get(currency)
+            if fx_ticker is None:
+                raise MarketDataError(
+                    f"INR conversion is not configured for {currency} ({ticker})."
+                )
+            if fx_ticker not in fx_series_cache:
+                fx_prices = download_adjusted_close([fx_ticker], start=start, end=end)
+                fx_series_cache[fx_ticker] = fx_prices.iloc[:, 0].rename(fx_ticker)
+            rate = fx_series_cache[fx_ticker].reindex(prices.index).ffill().bfill()
+            if rate.isna().any():
+                raise MarketDataError(
+                    f"Insufficient {currency}/INR exchange-rate observations for {ticker}"
+                )
+        converted[ticker] = prices[ticker].mul(rate)
+        latest_fx_rates[ticker] = float(rate.iloc[-1])
+
+    return clean_price_frame(converted), latest_fx_rates
 
 
 def save_price_frame(prices: pd.DataFrame, path: str | Path) -> Path:

@@ -113,6 +113,38 @@ def build_html_report(result: Any) -> str:
         allocation["amount_inr"] = allocation["amount_inr"].map(
             lambda value: f"INR {float(value):,.0f}"
         )
+    if "latest_price" in allocation:
+        allocation["latest_price"] = allocation["latest_price"].map(
+            lambda value: f"INR {float(value):,.2f}"
+        )
+    if "native_price" in allocation:
+        allocation["native_price"] = allocation["native_price"].map(
+            lambda value: f"{float(value):,.2f}"
+        )
+    if "fx_rate_to_inr" in allocation:
+        allocation["fx_rate_to_inr"] = allocation["fx_rate_to_inr"].map(
+            lambda value: f"{float(value):,.4f}"
+        )
+    if "estimated_cost_inr" in allocation:
+        allocation["estimated_cost_inr"] = allocation["estimated_cost_inr"].map(
+            lambda value: f"INR {float(value):,.0f}"
+        )
+    currency_summary = getattr(result, "currency_summary", pd.DataFrame()).copy()
+    if not currency_summary.empty:
+        currency_summary = currency_summary.rename(
+            columns={
+                "ticker": "ticker",
+                "native_currency": "native currency",
+                "native_price": "native price",
+                "fx_rate_to_inr": "FX rate to INR",
+                "price_inr": "price in INR",
+            }
+        )
+        for column in ("native price", "FX rate to INR", "price in INR"):
+            if column in currency_summary:
+                currency_summary[column] = currency_summary[column].map(
+                    lambda value: f"{float(value):,.4f}"
+                )
     candidates = _format_frame(
         result.candidate_metrics,
         ("CAGR", "volatility", "max_drawdown"),
@@ -247,7 +279,7 @@ footer {{ margin-top: 35px; color: #667085; font-size: 12px; }}
 <h2>How the recommendation was produced</h2>
 <ol>
 <li>The entered company names were resolved to market tickers shown below.</li>
-<li>Adjusted daily prices were collected and converted into daily returns.</li>
+<li>Adjusted daily prices were collected, converted into INR using aligned daily FX rates where required, and then converted into daily returns.</li>
 <li>Several long-only, fully invested portfolio objectives were optimised subject to per-security caps.</li>
 <li>The selected risk appetite determined which objective was preferred.</li>
 <li>Portfolio performance, drawdown, VaR, Expected Shortfall, factor exposures and stress scenarios were calculated.</li>
@@ -255,6 +287,7 @@ footer {{ margin-top: 35px; color: #667085; font-size: 12px; }}
 </ol>
 
 <h2>Resolved securities</h2>{_table(resolution)}
+<h2>Currency conversion</h2>{_table(currency_summary)}
 <h2>Recommended allocation</h2>{_table(allocation)}
 <h2>Why these weights?</h2>
 <p>The table traces the recommendation from the selected optimiser through each available model adjustment and the final per-security constraint.</p>

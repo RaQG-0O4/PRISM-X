@@ -18,7 +18,8 @@ from prismx.analytics import (
 )
 from prismx.data import (
     collect_macro_returns,
-    download_adjusted_close,
+    convert_prices_to_inr,
+    download_adjusted_close_with_currency,
     resolve_ticker,
     search_ticker_online,
 )
@@ -84,6 +85,7 @@ class InteractiveAnalysis:
     historical_stress: pd.DataFrame = field(default_factory=pd.DataFrame)
     reverse_stress: pd.DataFrame = field(default_factory=pd.DataFrame)
     factor_snapshot: pd.DataFrame = field(default_factory=pd.DataFrame)
+    currency_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
     macro_returns: pd.DataFrame = field(default_factory=pd.DataFrame)
     macro_errors: dict[str, str] = field(default_factory=dict)
     weight_trace: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -141,7 +143,17 @@ def analyse_user_portfolio(
     tickers = list(name_to_ticker.values()) + [benchmark_ticker]
     end = date.today()
     start = (pd.Timestamp(end) - pd.DateOffset(years=history_years)).date()
-    prices = download_adjusted_close(tickers, start=start, end=end)
+    prices_native, price_currencies = download_adjusted_close_with_currency(
+        tickers,
+        start=start,
+        end=end,
+    )
+    prices, latest_fx_rates = convert_prices_to_inr(
+        prices_native,
+        price_currencies,
+        start=start,
+        end=end,
+    )
     returns = calculate_asset_returns(prices)
     holding_tickers = list(name_to_ticker.values())
     holding_returns = returns.loc[:, holding_tickers]
@@ -297,9 +309,19 @@ def analyse_user_portfolio(
     performance_metrics = calculate_metrics(recommended_returns)
     risk_metrics = calculate_risk_metrics(recommended_returns)
     display_names = {ticker: name for name, ticker in name_to_ticker.items()}
+    latest_native_prices = prices_native.loc[:, holding_tickers].ffill().iloc[-1]
     latest_prices = prices.loc[:, holding_tickers].ffill().iloc[-1]
     estimated_shares = (recommended_weights * amount_inr / latest_prices).fillna(0.0).floordiv(1.0)
     estimated_cost = estimated_shares * latest_prices
+    currency_summary = pd.DataFrame(
+        {
+            "ticker": holding_tickers,
+            "native_currency": [price_currencies[ticker] for ticker in holding_tickers],
+            "native_price": [float(latest_native_prices[ticker]) for ticker in holding_tickers],
+            "fx_rate_to_inr": [float(latest_fx_rates[ticker]) for ticker in holding_tickers],
+            "price_inr": [float(latest_prices[ticker]) for ticker in holding_tickers],
+        }
+    )
     allocation = pd.DataFrame(
         {
             "stock": [display_names[ticker] for ticker in recommended_weights.index],
@@ -307,6 +329,9 @@ def analyse_user_portfolio(
             "weight": recommended_weights.to_numpy(),
             "amount_inr": recommended_weights.to_numpy() * amount_inr,
             "latest_price": latest_prices.reindex(recommended_weights.index).to_numpy(),
+            "native_price": latest_native_prices.reindex(recommended_weights.index).to_numpy(),
+            "currency": [price_currencies[ticker] for ticker in recommended_weights.index],
+            "fx_rate_to_inr": [latest_fx_rates[ticker] for ticker in recommended_weights.index],
             "estimated_shares": estimated_shares.reindex(recommended_weights.index).to_numpy(),
             "estimated_cost_inr": estimated_cost.reindex(recommended_weights.index).to_numpy(),
         }
@@ -336,6 +361,7 @@ def analyse_user_portfolio(
         historical_stress=historical_stress,
         reverse_stress=reverse_stress,
         factor_snapshot=factor_snapshot,
+        currency_summary=currency_summary,
         macro_returns=macro_returns,
         macro_errors=macro_errors,
         weight_trace=weight_trace,

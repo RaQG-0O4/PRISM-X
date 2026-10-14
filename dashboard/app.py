@@ -438,7 +438,10 @@ if interactive_analysis is not None:
             "ticker": "Ticker",
             "weight": "Weight",
             "amount_inr": "Amount (INR)",
-            "latest_price": "Latest price",
+            "latest_price": "Latest price (INR)",
+            "native_price": "Native price",
+            "currency": "Currency",
+            "fx_rate_to_inr": "FX rate to INR",
             "estimated_shares": "Estimated shares",
             "estimated_cost_inr": "Estimated cost (INR)",
         }
@@ -448,7 +451,9 @@ if interactive_analysis is not None:
             {
                 "Weight": "{:.2%}",
                 "Amount (INR)": "INR {:,.0f}",
-                "Latest price": "INR {:,.2f}",
+                "Latest price (INR)": "INR {:,.2f}",
+                "Native price": "{:,.2f}",
+                "FX rate to INR": "{:,.4f}",
                 "Estimated shares": "{:,.0f}",
                 "Estimated cost (INR)": "INR {:,.0f}",
             }
@@ -462,6 +467,36 @@ if interactive_analysis is not None:
         y_label="Weight",
         alt="Recommended portfolio weights by stock",
     )
+    currency_summary = getattr(result, "currency_summary", pd.DataFrame()).copy()
+    if not currency_summary.empty:
+        currency_display = currency_summary.rename(
+            columns={
+                "ticker": "Ticker",
+                "native_currency": "Native currency",
+                "native_price": "Native price",
+                "fx_rate_to_inr": "FX rate to INR",
+                "price_inr": "Price in INR",
+            }
+        )
+        with st.expander("Currency conversion details", icon=":material/currency_exchange:"):
+            if set(currency_display["Native currency"]) == {"INR"}:
+                st.caption("All selected securities are INR-denominated; no foreign-exchange conversion was required.")
+            else:
+                st.caption(
+                    "Foreign prices were converted to INR using aligned daily exchange rates before returns, risk and share quantities were calculated."
+                )
+            st.dataframe(
+                currency_display.style.format(
+                    {
+                        "Native price": "{:,.2f}",
+                        "FX rate to INR": "{:,.4f}",
+                        "Price in INR": "INR {:,.2f}",
+                    }
+                ),
+                width="stretch",
+                hide_index=True,
+                alt="Native prices, exchange rates and INR-converted prices",
+            )
     with st.expander("Optimisation method comparison", icon=":material/compare_arrows:"):
         candidate_display = result.candidate_metrics.copy()
         candidate_display.index = [
