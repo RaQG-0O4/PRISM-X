@@ -45,3 +45,24 @@ def test_weight_trace_preserves_constraints_and_exposes_stages():
     assert np.isclose(final.sum(), 1.0)
     assert (final <= 0.7 + 1e-9).all()
     assert {"base_optimizer", "after_xgboost", "final_constrained"}.issubset(trace.columns)
+
+
+def test_lstm_without_holdout_skill_does_not_tilt_weights():
+    base = pd.Series({"AAA": 0.6, "BBB": 0.4})
+    low_vol = pd.Series({"AAA": 0.4, "BBB": 0.6})
+    final, trace = adjust_weights_with_signals_trace(
+        base,
+        low_vol,
+        {
+            "lstm": {
+                "forecast_volatility": 0.30,
+                "current_sequence_volatility": 0.10,
+                "test_metrics": {"test_skill": 0.0},
+            }
+        },
+        "moderate",
+        0.7,
+    )
+
+    assert np.allclose(trace["after_lstm"].to_numpy(), base.to_numpy())
+    assert np.isclose(final.sum(), 1.0)

@@ -244,11 +244,17 @@ def adjust_weights_with_signals_trace(
 
     if "lstm" in signals:
         lstm_signal = signals["lstm"]
-        forecast = float(lstm_signal.get("forecast_volatility", 0.0))
-        current = max(float(lstm_signal.get("current_sequence_volatility", 1e-8)), 1e-8)
-        rising_risk = max(forecast / current - 1.0, 0.0)
-        blend = float(np.clip(rising_risk * 0.20, 0.0, 0.20))
-        weights = (1.0 - blend) * weights + blend * low_vol
+        lstm_metrics = lstm_signal.get("test_metrics") or lstm_signal.get("validation_metrics") or {}
+        skill = lstm_metrics.get("test_skill", lstm_metrics.get("validation_skill"))
+        # A volatility forecast with no holdout improvement over the baseline
+        # is reported, but it must not tilt the recommendation. This prevents
+        # an unvalidated deep-learning signal from overriding risk optimisation.
+        if skill is None or float(skill) > 0.0:
+            forecast = float(lstm_signal.get("forecast_volatility", 0.0))
+            current = max(float(lstm_signal.get("current_sequence_volatility", 1e-8)), 1e-8)
+            rising_risk = max(forecast / current - 1.0, 0.0)
+            blend = float(np.clip(rising_risk * 0.20, 0.0, 0.20))
+            weights = (1.0 - blend) * weights + blend * low_vol
     trace["after_lstm"] = weights.copy()
 
     if "finbert" in signals:

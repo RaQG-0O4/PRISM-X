@@ -114,7 +114,13 @@ def analyse_user_portfolio(
 
     if amount_inr <= 0:
         raise ValueError("Portfolio amount must be greater than zero")
-    names = [name.strip() for name in stock_names if name.strip()]
+    names = []
+    for raw_name in stock_names:
+        # Users often paste names from a quoted list. Remove only surrounding
+        # quote characters so display names and ticker resolution stay clean.
+        cleaned_name = str(raw_name).strip().strip("\"'").strip()
+        if cleaned_name:
+            names.append(cleaned_name)
     if len(names) < 2:
         raise ValueError("Enter at least two stocks")
     if len({name.casefold() for name in names}) != len(names):

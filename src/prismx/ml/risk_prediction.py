@@ -71,15 +71,36 @@ def train_risk_model(
         raise ValueError("At least 100 observations are recommended for risk modelling")
     split_test = int(len(features) * (1 - test_fraction))
     split_validation = int(split_test * (1 - validation_fraction))
+
+    # Keep the evaluation chronological, but do not fail merely because the
+    # first planned training slice predates the first observed severe-loss
+    # event. Move the training boundary forward when enough validation data
+    # remains. This is still leakage-safe: every validation/test observation is
+    # later than every training observation.
+    initial_y_train = target.iloc[:split_validation]
+    if initial_y_train.nunique() < 2:
+        minimum_validation_observations = 30
+        latest_train_end = split_test - minimum_validation_observations
+        candidate_ends = range(split_validation + 1, latest_train_end + 1)
+        adjusted_end = next(
+            (end for end in candidate_ends if target.iloc[:end].nunique() >= 2),
+            None,
+        )
+        if adjusted_end is not None:
+            split_validation = adjusted_end
+
     x_train = features.iloc[:split_validation]
     y_train = target.iloc[:split_validation]
     x_validation, x_test = features.iloc[split_validation:split_test], features.iloc[split_test:]
     y_validation, y_test = target.iloc[split_validation:split_test], target.iloc[split_test:]
-    if y_train.nunique() < 2:
-        raise ValueError("Training period contains only one target class")
-
     positive_count = int(y_train.sum())
     negative_count = int((y_train == 0).sum())
+    if y_train.nunique() < 2:
+        raise ValueError(
+            "Training period contains only one target class "
+            f"(severe-loss events: {positive_count}; non-events: {negative_count}). "
+            "XGBoost was skipped because a binary classifier needs both classes."
+        )
     scale_pos_weight = negative_count / max(positive_count, 1)
 
     try:

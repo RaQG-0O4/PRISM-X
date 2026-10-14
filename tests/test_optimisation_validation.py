@@ -27,3 +27,30 @@ def test_optimisation_rejects_non_finite_returns():
 
     with pytest.raises(ValueError, match="finite"):
         optimise_portfolios(returns)
+
+
+def test_optimisation_stabilises_nearly_collinear_assets():
+    rng = np.random.default_rng(7)
+    base = rng.normal(0.0, 0.01, 300)
+    returns = pd.DataFrame(
+        {
+            "AAA": base,
+            "BBB": base + 1e-10,
+            "CCC": rng.normal(0.0, 0.012, 300),
+            "DDD": rng.normal(0.0, 0.009, 300),
+        }
+    )
+
+    portfolios = optimise_portfolios(returns, maximum_weight=0.40)
+
+    assert set(portfolios) == {
+        "minimum_volatility",
+        "robust_minimum_volatility",
+        "maximum_sharpe",
+        "risk_parity",
+        "resilient",
+    }
+    for weights in portfolios.values():
+        assert np.isclose(weights.sum(), 1.0)
+        assert weights.min() >= 0.0
+        assert weights.max() <= 0.40 + 1e-6

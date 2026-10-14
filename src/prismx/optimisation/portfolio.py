@@ -9,6 +9,25 @@ import pandas as pd
 from scipy.optimize import minimize
 
 
+def _stabilise_covariance(covariance: pd.DataFrame) -> pd.DataFrame:
+    """Return a symmetric, positive-definite covariance estimate.
+
+    Historical covariance matrices can become nearly singular when assets are
+    highly correlated or a rolling window is short. A small eigenvalue floor
+    keeps the optimiser numerically stable without materially changing the
+    observed risk structure.
+    """
+
+    matrix = covariance.to_numpy(dtype=float)
+    matrix = (matrix + matrix.T) / 2.0
+    eigenvalues, eigenvectors = np.linalg.eigh(matrix)
+    diagonal_scale = max(float(np.nanmedian(np.diag(matrix))), 1.0e-8)
+    eigenvalue_floor = diagonal_scale * 1.0e-8
+    clipped_eigenvalues = np.maximum(eigenvalues, eigenvalue_floor)
+    stable = (eigenvectors * clipped_eigenvalues) @ eigenvectors.T
+    return pd.DataFrame(stable, index=covariance.index, columns=covariance.columns)
+
+
 def _optimise(
     mean_returns: pd.Series,
     covariance: pd.DataFrame,
@@ -18,19 +37,36 @@ def _optimise(
     assets = list(mean_returns.index)
     n_assets = len(assets)
     x0 = np.full(n_assets, 1.0 / n_assets)
-    result = minimize(
-        objective,
-        x0=x0,
-        method="SLSQP",
-        bounds=[(0.0, maximum_weight)] * n_assets,
-        constraints={"type": "eq", "fun": lambda weights: np.sum(weights) - 1.0},
-        options={"maxiter": 500, "ftol": 1e-10},
-    )
-    if not result.success:
-        raise ValueError(f"Portfolio optimisation failed: {result.message}")
-    cleaned_weights = np.clip(result.x, 0.0, None)
-    cleaned_weights = cleaned_weights / cleaned_weights.sum()
-    return pd.Series(cleaned_weights, index=assets, name="weight")
+    last_message = "unknown solver failure"
+    # SLSQP can be sensitive to finite-difference steps when an objective is
+    # close to a boundary. Retry with a slightly different numerical scale
+    # before reporting a genuine convergence problem to the caller.
+    for options in (
+        {"maxiter": 2_000, "ftol": 1e-8, "eps": 1e-7},
+        {"maxiter": 4_000, "ftol": 1e-7, "eps": 1e-5},
+    ):
+        result = minimize(
+            objective,
+            x0=x0,
+            method="SLSQP",
+            bounds=[(0.0, maximum_weight)] * n_assets,
+            constraints={"type": "eq", "fun": lambda weights: np.sum(weights) - 1.0},
+            options=options,
+        )
+        last_message = str(result.message)
+        candidate = np.asarray(result.x, dtype=float)
+        feasible = (
+            candidate.shape == (n_assets,)
+            and np.isfinite(candidate).all()
+            and abs(float(candidate.sum()) - 1.0) <= 1e-5
+            and candidate.min() >= -1e-6
+            and candidate.max() <= maximum_weight + 1e-6
+        )
+        if result.success and feasible:
+            cleaned_weights = np.clip(candidate, 0.0, None)
+            cleaned_weights = cleaned_weights / cleaned_weights.sum()
+            return pd.Series(cleaned_weights, index=assets, name="weight")
+    raise ValueError(f"Portfolio optimisation failed: {last_message}")
 
 
 def optimise_portfolios(
@@ -57,12 +93,12 @@ def optimise_portfolios(
     if maximum_weight * selected.shape[1] < 1.0 - 1e-12:
         raise ValueError("maximum_weight is too small to allocate the full portfolio")
     mean_returns = selected.mean() * 252
-    covariance = selected.cov() * 252
+    covariance = _stabilise_covariance(selected.cov() * 252)
     cov = covariance.to_numpy()
 
     # A shrinkage covariance estimate is included as a robustness diagnostic.
     # It reduces the sensitivity of the covariance matrix to noisy historical
-    # correlations while leaving the standard optimisers unchanged.
+    # correlations; both covariance estimates are numerically stabilised.
     try:
         from sklearn.covariance import LedoitWolf
 
@@ -73,6 +109,7 @@ def optimise_portfolios(
         )
     except Exception:  # pragma: no cover - scikit-learn is a project dependency
         shrinkage_covariance = covariance.copy()
+    shrinkage_covariance = _stabilise_covariance(shrinkage_covariance)
 
     def volatility(weights: np.ndarray) -> float:
         return float(np.sqrt(max(weights.T @ cov @ weights, 0.0)))
@@ -87,7 +124,9 @@ def optimise_portfolios(
             return 1e6
         component = weights * (cov @ weights) / vol
         target = vol / len(weights)
-        return float(np.sum((component - target) ** 2))
+        # Scale the small squared-error objective so SLSQP's finite-difference
+        # gradient is not lost to machine precision. The minimiser is unchanged.
+        return float(np.sum((component - target) ** 2) * 1.0e4)
 
     def resilient(weights: np.ndarray) -> float:
         portfolio_returns = selected.to_numpy() @ weights

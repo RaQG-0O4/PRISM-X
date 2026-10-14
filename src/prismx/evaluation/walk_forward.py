@@ -90,16 +90,25 @@ def run_walk_forward_evaluation(
         if train_holdings.empty or test_holdings.empty:
             continue
 
-        candidates = optimise_portfolios(
-            train_holdings,
-            maximum_weight=max(maximum_weight, 1.0 / len(holding_columns)),
-            stress_penalty=stress_penalty,
-        )
+        try:
+            candidates = optimise_portfolios(
+                train_holdings,
+                maximum_weight=max(maximum_weight, 1.0 / len(holding_columns)),
+                stress_penalty=stress_penalty,
+            )
+        except Exception as error:  # noqa: BLE001 - preserve the out-of-sample window
+            # A numerical failure in one optimiser must not erase the entire
+            # validation study. Equal-weight is a transparent, feasible
+            # benchmark for the affected window; the diagnostic is retained.
+            model_errors.append(
+                f"Optimisation window {test.index[0].date()} used equal-weight fallback: {error}"
+            )
+            candidates = {}
         candidates = {"equal_weight": _equal_weights(holding_columns), **candidates}
 
         if include_ai_model:
             try:
-                base_weights = candidates["resilient"]
+                base_weights = candidates.get("resilient", candidates["equal_weight"])
                 training_portfolio = calculate_portfolio_returns(train_holdings, base_weights)
                 signals, errors = run_optional_models(
                     training_portfolio,

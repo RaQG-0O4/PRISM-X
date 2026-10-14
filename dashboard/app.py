@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import importlib
 import inspect
+from datetime import date
 from pathlib import Path
 import subprocess
 import sys
@@ -246,6 +247,13 @@ if interactive_analysis is not None:
     st.caption(
         "All model and optimisation results use the resolved securities and the displayed historical period. Provider failures are shown explicitly rather than replaced with invented values."
     )
+    data_age_days = max(0, (date.today() - pd.Timestamp(result.data_end).date()).days)
+    if data_age_days > 7:
+        st.warning(
+            f"Market data ends on {result.data_end}, approximately {data_age_days} days old. "
+            "Refresh the analysis before using the allocation for a current decision.",
+            icon=":material/update:",
+        )
 
     st.subheader("Suggested allocations", icon=":material/pie_chart:")
     st.dataframe(
@@ -365,7 +373,12 @@ if interactive_analysis is not None:
                 alt="Walk-forward portfolio turnover",
             )
         if getattr(result, "walk_forward_model_errors", []):
-            st.warning("Some AI walk-forward windows were unavailable: " + "; ".join(getattr(result, "walk_forward_model_errors", [])[:3]))
+            st.warning(
+                "Some walk-forward windows or optional model signals were unavailable; "
+                "the affected diagnostics were retained: "
+                + "; ".join(getattr(result, "walk_forward_model_errors", [])[:3]),
+                icon=":material/warning:",
+            )
     if result.walk_forward_error:
         st.warning(f"Walk-forward validation was not completed: {result.walk_forward_error}")
 
@@ -444,25 +457,51 @@ if interactive_analysis is not None:
         simulation_columns[3].metric(
             "Median outcome", f"{result.monte_carlo_summary['median_return']:.2%}"
         )
-        # Altair cannot serialise pandas IntervalIndex values reliably on the
-        # deployed Streamlit runtime. Convert the bins to explicit labels and
-        # pass a regular DataFrame with named x/y columns instead.
         histogram_counts = pd.cut(
             result.monte_carlo_outcomes, bins=20, include_lowest=True
         ).value_counts().sort_index()
         histogram = pd.DataFrame(
             {
-                "Outcome range": histogram_counts.index.astype(str),
+                "lower": [interval.left for interval in histogram_counts.index],
+                "upper": [interval.right for interval in histogram_counts.index],
                 "Simulations": histogram_counts.to_numpy(dtype=int),
             }
         )
-        st.bar_chart(
-            histogram,
-            x="Outcome range",
-            y="Simulations",
-            y_label="Simulations",
-            alt="Monte Carlo outcome distribution",
+        histogram["Outcome range"] = histogram.apply(
+            lambda row: f"{row['lower']:.1%} to {row['upper']:.1%}", axis=1
         )
+        try:
+            import altair as alt
+
+            chart = (
+                alt.Chart(histogram)
+                .mark_bar()
+                .encode(
+                    x=alt.X(
+                        "lower:Q",
+                        title="Cumulative simulated return",
+                        axis=alt.Axis(format=".0%"),
+                    ),
+                    x2="upper:Q",
+                    y=alt.Y("Simulations:Q", title="Simulations"),
+                    tooltip=[
+                        alt.Tooltip("Outcome range:N", title="Outcome range"),
+                        alt.Tooltip("Simulations:Q", title="Simulations", format=",d"),
+                    ],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(
+                chart,
+                width="stretch",
+                theme="streamlit",
+            )
+        except ImportError:  # pragma: no cover - Streamlit installs Altair
+            st.bar_chart(
+                histogram.set_index("lower")["Simulations"],
+                y_label="Simulations",
+                alt="Monte Carlo outcome distribution",
+            )
 
     if result.model_signals or result.model_errors:
         st.subheader("Model evidence centre", icon=":material/science:")
@@ -553,6 +592,19 @@ if interactive_analysis is not None:
             )
         if signal_rows:
             st.dataframe(pd.DataFrame(signal_rows), width="stretch", hide_index=True)
+        if "lstm" in result.model_signals:
+            lstm_metrics = (
+                result.model_signals["lstm"].get("test_metrics")
+                or result.model_signals["lstm"].get("validation_metrics")
+                or {}
+            )
+            lstm_skill = lstm_metrics.get("test_skill", lstm_metrics.get("validation_skill"))
+            if lstm_skill is not None and float(lstm_skill) <= 0.0:
+                st.info(
+                    "LSTM did not outperform its baseline on the untouched test period, "
+                    "so its forecast is shown for diagnostics but does not tilt the recommended weights.",
+                    icon=":material/info:",
+                )
         if "xgboost" in result.model_signals:
             feature_importance = result.model_signals["xgboost"].get("feature_importance", {})
             if feature_importance:
@@ -587,12 +639,12 @@ with st.sidebar:
     ):
         run_pipeline()
 
-if not summary:
+if not summary and interactive_analysis is None:
     st.warning("No pipeline results are available yet.", icon=":material/hourglass_empty:")
     st.write("Run the core analysis to download or load prices, calculate risk, optimise weights and create the dashboard tables.")
     if st.button("Run analysis now", type="primary", icon=":material/play_arrow:"):
         run_pipeline()
-else:
+elif summary and interactive_analysis is None:
     st.subheader("Portfolio overview", icon=":material/dashboard:")
     with st.container(border=True):
         columns = st.columns(6)
