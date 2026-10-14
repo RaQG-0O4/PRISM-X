@@ -136,6 +136,525 @@ def run_pipeline() -> None:
             st.code(result.stderr)
 
 
+DEFAULT_ANALYSIS_CONFIG = {
+    "amount_inr": 3_700_000.0,
+    "risk_appetite": "Moderate",
+    "history_years": 10,
+    "run_xgboost": True,
+    "run_finbert": True,
+    "run_lstm": True,
+    "run_walk_forward": True,
+    "run_macro": True,
+    "run_monte_carlo": True,
+    "transaction_cost_bps": 25.0,
+    "monte_carlo_horizon_days": 252,
+    "monte_carlo_simulations": 5_000,
+    "monte_carlo_loss_threshold": -0.20,
+    "news": None,
+    "news_file_name": None,
+}
+
+
+def _clean_stock_values(values: object) -> list[str]:
+    """Normalise values returned by searchable Streamlit inputs."""
+
+    if values is None:
+        return []
+    cleaned = []
+    for value in values if isinstance(values, (list, tuple, set)) else [values]:
+        text = str(value).strip().strip("\"'").strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+def _set_widget_default(key: str, value: object) -> None:
+    """Set a widget's initial value without conflicting with Streamlit state."""
+
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+def _render_stepper(active_step: int) -> None:
+    """Render the guided analysis stages as a compact visual stepper."""
+
+    steps = [
+        (1, "Portfolio", "account_balance_wallet"),
+        (2, "Models", "psychology"),
+        (3, "Review", "fact_check"),
+        (4, "Results", "insights"),
+    ]
+    step_columns = st.columns(len(steps))
+    for column, (step_number, label, icon) in zip(step_columns, steps):
+        with column:
+            if step_number < active_step:
+                st.badge(
+                    f"{step_number}  {label}",
+                    icon=":material/check_circle:",
+                    color="green",
+                )
+            elif step_number == active_step:
+                st.badge(
+                    f"{step_number}  {label}",
+                    icon=f":material/{icon}:",
+                    color="blue",
+                )
+            else:
+                st.badge(
+                    f"{step_number}  {label}",
+                    icon=f":material/{icon}:",
+                    color="gray",
+                )
+
+
+def _read_uploaded_news(uploaded_file: object) -> tuple[pd.DataFrame | None, str | None]:
+    """Validate an optional historical news file before analysis starts."""
+
+    if uploaded_file is None:
+        return None, None
+    uploaded_news = pd.read_csv(uploaded_file)
+    required_news_columns = {"title", "published_at"}
+    missing_news_columns = required_news_columns.difference(uploaded_news.columns)
+    if missing_news_columns:
+        raise ValueError(
+            "News CSV is missing: " + ", ".join(sorted(missing_news_columns))
+        )
+    return uploaded_news, getattr(uploaded_file, "name", "uploaded_news.csv")
+
+
+def _analysis_options(config: dict[str, object]) -> dict[str, object]:
+    """Build workflow arguments while remaining compatible with older deploys."""
+
+    options = {
+        "amount_inr": float(config["amount_inr"]),
+        "stock_names": list(config["stock_names"]),
+        "risk_appetite": str(config["risk_appetite"]),
+        "history_years": int(config["history_years"]),
+        "run_xgboost": bool(config["run_xgboost"]),
+        "run_finbert": bool(config["run_finbert"]),
+        "run_lstm": bool(config["run_lstm"]),
+        "run_walk_forward": bool(config["run_walk_forward"]),
+        "run_macro": bool(config["run_macro"]),
+        "news": config.get("news"),
+        "transaction_cost_bps": float(config["transaction_cost_bps"]),
+    }
+    workflow_parameters = inspect.signature(analyse_user_portfolio).parameters
+    if "run_monte_carlo" in workflow_parameters:
+        options.update(
+            {
+                "run_monte_carlo": bool(config["run_monte_carlo"]),
+                "monte_carlo_simulations": int(config["monte_carlo_simulations"]),
+                "monte_carlo_horizon_days": int(config["monte_carlo_horizon_days"]),
+                "monte_carlo_loss_threshold": float(config["monte_carlo_loss_threshold"]),
+            }
+        )
+    return options
+
+
+def _execute_analysis(config: dict[str, object]) -> None:
+    """Run one analysis with visible, honest progress stages."""
+
+    status = None
+    try:
+        with st.status(
+            "PRISM-X is preparing your recommendation",
+            expanded=True,
+        ) as status:
+            status.write("Validating the investment brief")
+            status.write("Resolving company names to exchange tickers")
+            status.write("Downloading price history and aligning currencies to INR")
+            result = analyse_user_portfolio(**_analysis_options(config))
+            status.write("Calculating risk, optimisation, scenarios and evidence")
+            status.update(
+                label="Analysis complete — loading the evidence dashboard",
+                state="complete",
+                expanded=False,
+            )
+        st.session_state["interactive_analysis"] = result
+        st.session_state["analysis_config"] = config
+        st.session_state.pop("interactive_error", None)
+        st.session_state["wizard_step"] = 1
+        st.rerun()
+    except Exception as error:  # noqa: BLE001 - show a user-readable dashboard error
+        if status is not None:
+            status.update(
+                label="Analysis needs attention",
+                state="error",
+                expanded=True,
+            )
+        st.session_state["interactive_error"] = str(error)
+
+
+def _initialise_setup_state() -> None:
+    """Initialise all guided-flow state in one predictable place."""
+
+    st.session_state.setdefault("wizard_step", 1)
+    st.session_state.setdefault("draft_config", {})
+    _set_widget_default("setup_amount", DEFAULT_ANALYSIS_CONFIG["amount_inr"])
+    _set_widget_default("setup_mode", "Start from scratch")
+    _set_widget_default("setup_scratch_stocks", [])
+    _set_widget_default("setup_preset_stocks", PRESET_PORTFOLIO)
+    _set_widget_default("setup_risk", DEFAULT_ANALYSIS_CONFIG["risk_appetite"])
+    _set_widget_default("setup_history", DEFAULT_ANALYSIS_CONFIG["history_years"])
+    _set_widget_default("setup_xgboost", DEFAULT_ANALYSIS_CONFIG["run_xgboost"])
+    _set_widget_default("setup_finbert", DEFAULT_ANALYSIS_CONFIG["run_finbert"])
+    _set_widget_default("setup_lstm", DEFAULT_ANALYSIS_CONFIG["run_lstm"])
+    _set_widget_default("setup_walk_forward", DEFAULT_ANALYSIS_CONFIG["run_walk_forward"])
+    _set_widget_default("setup_macro", DEFAULT_ANALYSIS_CONFIG["run_macro"])
+    _set_widget_default("setup_monte_carlo", DEFAULT_ANALYSIS_CONFIG["run_monte_carlo"])
+    _set_widget_default("setup_transaction_cost", DEFAULT_ANALYSIS_CONFIG["transaction_cost_bps"])
+    _set_widget_default("setup_mc_horizon", DEFAULT_ANALYSIS_CONFIG["monte_carlo_horizon_days"])
+    _set_widget_default("setup_mc_simulations", DEFAULT_ANALYSIS_CONFIG["monte_carlo_simulations"])
+    _set_widget_default("setup_mc_threshold", DEFAULT_ANALYSIS_CONFIG["monte_carlo_loss_threshold"])
+
+
+def _render_portfolio_step() -> None:
+    st.header("Welcome to PRISM-X", icon=":material/rocket_launch:")
+    st.write(
+        "Build a portfolio brief first. PRISM-X will then resolve your securities, "
+        "convert foreign prices to INR where needed, and explain how the final weights were produced."
+    )
+    with st.container(border=True):
+        st.subheader("Step 1 · Define your portfolio", icon=":material/account_balance_wallet:")
+        st.caption("Start empty for a real custom portfolio, or use the preset for a quick teaching/demo run.")
+        mode = st.segmented_control(
+            "Portfolio starting point",
+            ["Start from scratch", "Use preset portfolio"],
+            key="setup_mode",
+            width="stretch",
+            help="The preset is optional; it is not silently included in a custom analysis.",
+        )
+        with st.form("portfolio_setup_form", border=False):
+            amount = st.number_input(
+                "Amount to invest (INR)",
+                min_value=1_000.0,
+                step=10_000.0,
+                key="setup_amount",
+                help="All portfolio allocations and foreign-currency conversions are reported in INR.",
+            )
+            if mode == "Use preset portfolio":
+                selected = st.multiselect(
+                    "Search and select securities",
+                    options=STOCK_PICKER_OPTIONS,
+                    format_func=stock_picker_label,
+                    key="setup_preset_stocks",
+                    max_selections=20,
+                    placeholder="Search a company name or ticker",
+                    accept_new_options=True,
+                    filter_mode="fuzzy",
+                    help="You can remove preset holdings or add more securities by typing their name or ticker.",
+                )
+            else:
+                selected = st.multiselect(
+                    "Search and select securities",
+                    options=STOCK_PICKER_OPTIONS,
+                    format_func=stock_picker_label,
+                    key="setup_scratch_stocks",
+                    max_selections=20,
+                    placeholder="Type a company name or ticker and press Enter",
+                    accept_new_options=True,
+                    filter_mode="fuzzy",
+                    help="The portfolio is empty until you add at least two securities.",
+                )
+            risk = st.selectbox(
+                "Risk appetite",
+                ["Conservative", "Moderate", "Aggressive"],
+                key="setup_risk",
+                help="This controls the optimisation objective and maximum holding concentration.",
+            )
+            st.caption("Names are resolved to exchange tickers before analysis. Non-Indian securities are converted to INR using aligned FX data.")
+            continue_setup = st.form_submit_button(
+                "Continue to model selection",
+                type="primary",
+                icon=":material/arrow_forward:",
+                width="stretch",
+            )
+        if continue_setup:
+            stocks = _clean_stock_values(selected)
+            if len(stocks) < 2:
+                st.error("Add at least two securities before continuing.", icon=":material/error:")
+            else:
+                st.session_state["draft_config"] = {
+                    "amount_inr": float(amount),
+                    "stock_names": stocks,
+                    "risk_appetite": risk,
+                }
+                st.session_state["wizard_step"] = 2
+                st.rerun()
+
+
+def _render_model_step() -> None:
+    draft = st.session_state["draft_config"]
+    st.header("Choose the evidence layers", icon=":material/psychology:")
+    st.write("Select the diagnostics you want PRISM-X to run. Recommended defaults are already selected for a complete demonstration.")
+    with st.container(border=True):
+        st.subheader("Step 2 · Models and history", icon=":material/tune:")
+        with st.form("model_setup_form", border=False):
+            history = st.slider(
+                "Historical data window (years)",
+                min_value=3,
+                max_value=10,
+                key="setup_history",
+                help="Longer histories give more observations, but may include market regimes that are less relevant today.",
+            )
+            st.caption("The longer window is the recommended starting point; all results still remain historical estimates.")
+            model_columns = st.columns(3)
+            with model_columns[0].container(border=True):
+                xgboost = st.checkbox(
+                    "XGBoost loss-risk model",
+                    key="setup_xgboost",
+                    help="Estimates severe-loss probability using market and macro features.",
+                )
+                st.caption("Classification signal")
+            with model_columns[1].container(border=True):
+                lstm = st.checkbox(
+                    "LSTM volatility forecast",
+                    key="setup_lstm",
+                    help="Forecasts near-term realised volatility when the deep-learning dependency is available.",
+                )
+                st.caption("Time-series signal")
+            with model_columns[2].container(border=True):
+                finbert = st.checkbox(
+                    "FinBERT news sentiment",
+                    key="setup_finbert",
+                    help="Scores recent financial-news text. Upload labelled history for accuracy measurement.",
+                )
+                st.caption("Text sentiment signal")
+            st.subheader("Validation and market context", icon=":material/fact_check:")
+            validation_columns = st.columns(3)
+            with validation_columns[0]:
+                walk_forward = st.checkbox(
+                    "Walk-forward benchmark",
+                    key="setup_walk_forward",
+                    help="Tests strategies on unseen rolling periods and includes transaction costs.",
+                )
+            with validation_columns[1]:
+                macro = st.checkbox(
+                    "Macro factors",
+                    key="setup_macro",
+                    help="Adds VIX, USD/INR, crude, gold and US 10Y context where available.",
+                )
+            with validation_columns[2]:
+                monte_carlo = st.checkbox(
+                    "Monte Carlo scenarios",
+                    key="setup_monte_carlo",
+                    help="Simulates outcome distributions from historical means and correlations.",
+                )
+            uploaded_news = st.file_uploader(
+                "Optional labelled or historical news CSV",
+                type=["csv"],
+                help="Required columns: title, published_at. Add ticker and label to measure labelled performance.",
+            )
+            st.caption("This upload is optional. FinBERT can still use recent available headlines when the live news source returns data.")
+            with st.expander("Advanced simulation and trading assumptions", icon=":material/settings:"):
+                transaction_cost = st.slider(
+                    "Transaction cost (basis points)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    step=5.0,
+                    key="setup_transaction_cost",
+                    help="25 basis points equals 0.25% per rebalance turnover.",
+                )
+                advanced_columns = st.columns(3)
+                with advanced_columns[0]:
+                    horizon = st.slider(
+                        "Simulation horizon (days)",
+                        min_value=21,
+                        max_value=756,
+                        step=21,
+                        key="setup_mc_horizon",
+                    )
+                with advanced_columns[1]:
+                    simulations = st.select_slider(
+                        "Number of simulations",
+                        options=[1_000, 2_500, 5_000, 10_000],
+                        key="setup_mc_simulations",
+                    )
+                with advanced_columns[2]:
+                    threshold = st.slider(
+                        "Loss threshold",
+                        min_value=-0.50,
+                        max_value=-0.05,
+                        step=0.05,
+                        format="%.0f%%",
+                        key="setup_mc_threshold",
+                    )
+            review_setup = st.form_submit_button(
+                "Review analysis",
+                type="primary",
+                icon=":material/fact_check:",
+                width="stretch",
+            )
+            back_to_portfolio = st.form_submit_button(
+                "Back to portfolio setup",
+                icon=":material/arrow_back:",
+                width="stretch",
+            )
+        if back_to_portfolio:
+            st.session_state["wizard_step"] = 1
+            st.rerun()
+        if review_setup:
+            try:
+                news, news_file_name = _read_uploaded_news(uploaded_news)
+                st.session_state["draft_config"] = {
+                    **draft,
+                    "history_years": int(history),
+                    "run_xgboost": bool(xgboost),
+                    "run_finbert": bool(finbert),
+                    "run_lstm": bool(lstm),
+                    "run_walk_forward": bool(walk_forward),
+                    "run_macro": bool(macro),
+                    "run_monte_carlo": bool(monte_carlo),
+                    "transaction_cost_bps": float(transaction_cost),
+                    "monte_carlo_horizon_days": int(horizon),
+                    "monte_carlo_simulations": int(simulations),
+                    "monte_carlo_loss_threshold": float(threshold),
+                    "news": news,
+                    "news_file_name": news_file_name,
+                }
+                st.session_state["wizard_step"] = 3
+                st.rerun()
+            except Exception as error:  # noqa: BLE001 - validation message for uploaded data
+                st.error(str(error), icon=":material/error:")
+
+
+def _render_review_step() -> None:
+    config = st.session_state["draft_config"]
+    st.header("Review before running", icon=":material/fact_check:")
+    st.write("This is the final checkpoint. Nothing is downloaded or calculated until you run the analysis.")
+    with st.container(border=True):
+        st.subheader("Step 3 · Analysis brief", icon=":material/assignment:")
+        overview_columns = st.columns(4)
+        overview_columns[0].metric("Investment", f"INR {float(config['amount_inr']):,.0f}")
+        overview_columns[1].metric("Holdings", len(config["stock_names"]))
+        overview_columns[2].metric("Risk appetite", str(config["risk_appetite"]))
+        overview_columns[3].metric("History", f"{int(config.get('history_years', 10))} years")
+        st.markdown("**Selected securities**")
+        with st.container(horizontal=True, gap="small", wrap=True):
+            for stock in config["stock_names"]:
+                st.badge(str(stock), icon=":material/candlestick_chart:", color="blue")
+        selected_models = []
+        for key, label in (
+            ("run_xgboost", "XGBoost"),
+            ("run_lstm", "LSTM"),
+            ("run_finbert", "FinBERT"),
+            ("run_walk_forward", "Walk-forward"),
+            ("run_macro", "Macro factors"),
+            ("run_monte_carlo", "Monte Carlo"),
+        ):
+            if config.get(key):
+                selected_models.append(label)
+        st.markdown("**Evidence layers**")
+        st.write(" · ".join(selected_models) if selected_models else "Historical optimisation only")
+        if config.get("news_file_name"):
+            st.caption(f"Historical news file: {config['news_file_name']}")
+        else:
+            st.caption("No historical news file uploaded. FinBERT will use live headlines only when available.")
+    action_columns = st.columns(2)
+    with action_columns[0]:
+        if st.button("Edit model and history settings", icon=":material/arrow_back:", width="stretch"):
+            st.session_state["wizard_step"] = 2
+            st.rerun()
+    with action_columns[1]:
+        if st.button("Run PRISM-X analysis", type="primary", icon=":material/play_arrow:", width="stretch"):
+            _execute_analysis(config)
+
+
+def _render_results_sidebar(current_result: object) -> None:
+    """Keep the full control surface available after results are loaded."""
+
+    saved_config = dict(st.session_state.get("analysis_config", {}))
+    saved_config.setdefault("stock_names", list(getattr(current_result, "name_to_ticker", {}).keys()))
+    for key, value in DEFAULT_ANALYSIS_CONFIG.items():
+        saved_config.setdefault(key, value)
+    options = list(dict.fromkeys(STOCK_PICKER_OPTIONS + list(saved_config["stock_names"])))
+    _set_widget_default("rerun_amount", saved_config["amount_inr"])
+    _set_widget_default("rerun_stocks", saved_config["stock_names"])
+    _set_widget_default("rerun_risk", saved_config["risk_appetite"])
+    _set_widget_default("rerun_history", saved_config["history_years"])
+    for source_key, widget_key in (
+        ("run_xgboost", "rerun_xgboost"),
+        ("run_finbert", "rerun_finbert"),
+        ("run_lstm", "rerun_lstm"),
+        ("run_walk_forward", "rerun_walk_forward"),
+        ("run_macro", "rerun_macro"),
+        ("run_monte_carlo", "rerun_monte_carlo"),
+        ("transaction_cost_bps", "rerun_transaction_cost"),
+        ("monte_carlo_horizon_days", "rerun_mc_horizon"),
+        ("monte_carlo_simulations", "rerun_mc_simulations"),
+        ("monte_carlo_loss_threshold", "rerun_mc_threshold"),
+    ):
+        _set_widget_default(widget_key, saved_config[source_key])
+    with st.sidebar:
+        st.header("Analysis controls", icon=":material/tune:")
+        st.caption("The current result stays visible until a replacement analysis succeeds.")
+        if st.button("Build another portfolio", icon=":material/add:", width="stretch"):
+            st.session_state.pop("interactive_analysis", None)
+            st.session_state.pop("interactive_error", None)
+            st.session_state["draft_config"] = {}
+            st.session_state["wizard_step"] = 1
+            st.rerun()
+        with st.expander("Adjust and rerun", icon=":material/refresh:"):
+            with st.form("rerun_analysis_form", border=False):
+                amount = st.number_input("Amount to invest (INR)", min_value=1_000.0, step=10_000.0, key="rerun_amount")
+                stocks = st.multiselect(
+                    "Search and select securities",
+                    options=options,
+                    format_func=stock_picker_label,
+                    key="rerun_stocks",
+                    max_selections=20,
+                    accept_new_options=True,
+                    filter_mode="fuzzy",
+                    placeholder="Search or type a company",
+                )
+                risk = st.selectbox("Risk appetite", ["Conservative", "Moderate", "Aggressive"], key="rerun_risk")
+                history = st.slider("History (years)", min_value=3, max_value=10, key="rerun_history")
+                st.caption("Model switches")
+                xgboost = st.checkbox("XGBoost loss-risk model", key="rerun_xgboost")
+                finbert = st.checkbox("FinBERT news sentiment", key="rerun_finbert")
+                lstm = st.checkbox("LSTM volatility forecast", key="rerun_lstm")
+                walk_forward = st.checkbox("Walk-forward benchmark", key="rerun_walk_forward")
+                macro = st.checkbox("Macro factors", key="rerun_macro")
+                monte_carlo = st.checkbox("Monte Carlo simulation", key="rerun_monte_carlo")
+                news_file = st.file_uploader("Optional historical news CSV", type=["csv"], key="rerun_news_file")
+                with st.expander("Advanced assumptions"):
+                    transaction_cost = st.slider("Transaction cost (basis points)", min_value=0.0, max_value=100.0, step=5.0, key="rerun_transaction_cost")
+                    horizon = st.slider("Simulation horizon (days)", min_value=21, max_value=756, step=21, key="rerun_mc_horizon")
+                    simulations = st.select_slider("Number of simulations", options=[1_000, 2_500, 5_000, 10_000], key="rerun_mc_simulations")
+                    threshold = st.slider("Loss threshold", min_value=-0.50, max_value=-0.05, step=0.05, format="%.0f%%", key="rerun_mc_threshold")
+                rerun = st.form_submit_button("Run replacement analysis", type="primary", icon=":material/play_arrow:", width="stretch")
+            if rerun:
+                try:
+                    news, news_file_name = _read_uploaded_news(news_file)
+                    cleaned_stocks = _clean_stock_values(stocks)
+                    if len(cleaned_stocks) < 2:
+                        raise ValueError("Select at least two securities before rerunning.")
+                    _execute_analysis(
+                        {
+                            "amount_inr": float(amount),
+                            "stock_names": cleaned_stocks,
+                            "risk_appetite": risk,
+                            "history_years": int(history),
+                            "run_xgboost": bool(xgboost),
+                            "run_finbert": bool(finbert),
+                            "run_lstm": bool(lstm),
+                            "run_walk_forward": bool(walk_forward),
+                            "run_macro": bool(macro),
+                            "run_monte_carlo": bool(monte_carlo),
+                            "transaction_cost_bps": float(transaction_cost),
+                            "monte_carlo_horizon_days": int(horizon),
+                            "monte_carlo_simulations": int(simulations),
+                            "monte_carlo_loss_threshold": float(threshold),
+                            "news": news,
+                            "news_file_name": news_file_name,
+                        }
+                    )
+                except Exception as error:  # noqa: BLE001 - validation message for uploaded data
+                    st.session_state["interactive_error"] = str(error)
+        if st.button("Refresh saved teaching snapshot", icon=":material/refresh:", width="stretch"):
+            run_pipeline()
+
+
 st.set_page_config(
     page_title="PRISM-X | Portfolio Risk & Resilience",
     page_icon=":material/monitoring:",
@@ -147,185 +666,42 @@ st.caption(
     "Decision-support analytics for portfolio construction, risk diagnostics and model evidence. "
     "Historical and model-based analysis; results are not investment guarantees."
 )
-
-st.sidebar.header("Build a portfolio", icon=":material/account_balance_wallet:")
-st.sidebar.caption("Choose your starting point, search for stocks, then run one reproducible analysis.")
-amount_inr = st.sidebar.number_input(
-    "Portfolio amount (INR)",
-    min_value=1_000.0,
-    value=3_700_000.0,
-    step=10_000.0,
-)
-portfolio_mode = st.sidebar.segmented_control(
-    "Starting portfolio",
-    ["Start from scratch", "Use preset portfolio"],
-    default="Start from scratch",
-    key="portfolio_mode",
-    width="stretch",
-    help="Start from an empty portfolio or load the six-stock teaching preset.",
-)
-if portfolio_mode == "Use preset portfolio":
-    selected_stocks = st.sidebar.multiselect(
-        "Search and select stocks",
-        options=STOCK_PICKER_OPTIONS,
-        default=PRESET_PORTFOLIO,
-        format_func=stock_picker_label,
-        key="preset_stock_picker",
-        max_selections=20,
-        placeholder="Search by company name or ticker",
-        help="Search the list, remove any preset holding, or type a new name/ticker and press Enter.",
-        accept_new_options=True,
-        filter_mode="fuzzy",
-    )
-else:
-    selected_stocks = st.sidebar.multiselect(
-        "Search and select stocks",
-        options=STOCK_PICKER_OPTIONS,
-        default=[],
-        format_func=stock_picker_label,
-        key="custom_stock_picker",
-        max_selections=20,
-        placeholder="Type a company name or ticker and press Enter",
-        help="The portfolio starts empty. Search the list or add any company name/ticker supported by the market-data provider.",
-        accept_new_options=True,
-        filter_mode="fuzzy",
-    )
-
-entered_stocks = [str(value).strip() for value in selected_stocks if str(value).strip()]
-if entered_stocks:
-    st.sidebar.badge(
-        f"{len(entered_stocks)} stock{'s' if len(entered_stocks) != 1 else ''} selected",
-        icon=":material/check_circle:",
-        color="blue",
-    )
-else:
-    st.sidebar.badge(
-        "No stocks selected yet",
-        icon=":material/search:",
-        color="orange",
-    )
-st.sidebar.caption(
-    "Tip: type a company name or ticker, press Enter, and select at least two holdings. "
-    "Names are resolved to exchange tickers before analysis."
-)
-risk_appetite = st.sidebar.selectbox(
-    "Risk appetite",
-    ["Conservative", "Moderate", "Aggressive"],
-    index=1,
-)
-history_years = st.sidebar.slider("History (years)", min_value=3, max_value=10, value=5)
-st.sidebar.subheader("AI signals", icon=":material/psychology:")
-run_xgboost = st.sidebar.checkbox(
-    "XGBoost loss-risk model",
-    help="Estimates the probability of a severe loss over the next 20 trading days.",
-)
-run_finbert = st.sidebar.checkbox(
-    "FinBERT news sentiment",
-    help="Downloads recent financial-news headlines and scores their sentiment.",
-)
-historical_news_file = st.sidebar.file_uploader(
-    "Optional labelled/historical news CSV",
-    type=["csv"],
-    help="Required columns: title, published_at. Add ticker for per-stock sentiment and label for accuracy measurement.",
-)
-run_lstm = st.sidebar.checkbox(
-    "LSTM volatility forecast",
-    help="Forecasts near-term realised volatility. TensorFlow is required.",
-)
-run_walk_forward = st.sidebar.checkbox(
-    "Walk-forward benchmark",
-    help="Tests the strategies on unseen rolling periods and compares them with equal-weight and NIFTY 50.",
-)
-transaction_cost_bps = st.sidebar.slider(
-    "Transaction cost (basis points)",
-    min_value=0.0,
-    max_value=100.0,
-    value=25.0,
-    step=5.0,
-    help="Used in walk-forward validation. 25 basis points equals 0.25% per rebalance turnover.",
-)
-run_macro = st.sidebar.checkbox(
-    "Macro factors",
-    help="Downloads India VIX, USD/INR, crude oil, gold and US 10Y yield data for context and XGBoost features.",
-)
-run_monte_carlo = st.sidebar.checkbox(
-    "Monte Carlo simulation",
-    help="Simulates portfolio outcomes using historical means and correlations.",
-)
-monte_carlo_horizon_days = st.sidebar.slider(
-    "Simulation horizon (days)", min_value=21, max_value=756, value=252, step=21
-)
-monte_carlo_simulations = st.sidebar.select_slider(
-    "Number of simulations",
-    options=[1_000, 2_500, 5_000, 10_000],
-    value=5_000,
-)
-monte_carlo_loss_threshold = st.sidebar.slider(
-    "Simulation loss threshold",
-    min_value=-0.50,
-    max_value=-0.05,
-    value=-0.20,
-    step=0.05,
-    format="%.0f%%",
-)
-
-if st.sidebar.button(
-    "Analyse portfolio",
-    type="primary",
-    icon=":material/play_arrow:",
-    disabled=len(entered_stocks) < 2,
-):
-    with st.spinner("Downloading data and optimising the portfolio..."):
-        try:
-            uploaded_news = None
-            if historical_news_file is not None:
-                uploaded_news = pd.read_csv(historical_news_file)
-                required_news_columns = {"title", "published_at"}
-                missing_news_columns = required_news_columns.difference(uploaded_news.columns)
-                if missing_news_columns:
-                    raise ValueError(
-                        "News CSV is missing: " + ", ".join(sorted(missing_news_columns))
-                    )
-            analysis_options = {
-                "amount_inr": amount_inr,
-                "stock_names": entered_stocks,
-                "risk_appetite": risk_appetite,
-                "history_years": history_years,
-                "run_xgboost": run_xgboost,
-                "run_finbert": run_finbert,
-                "run_lstm": run_lstm,
-                "run_walk_forward": run_walk_forward,
-                "run_macro": run_macro,
-                "news": uploaded_news,
-                "transaction_cost_bps": transaction_cost_bps,
-            }
-            # Streamlit can briefly reuse an older installed package while a
-            # new GitHub commit is redeploying.  Pass optional arguments only
-            # when the loaded workflow exposes them, so that the dashboard
-            # remains usable during that short transition.
-            workflow_parameters = inspect.signature(analyse_user_portfolio).parameters
-            if "run_monte_carlo" in workflow_parameters:
-                analysis_options.update(
-                    {
-                        "run_monte_carlo": run_monte_carlo,
-                        "monte_carlo_simulations": int(monte_carlo_simulations),
-                        "monte_carlo_horizon_days": monte_carlo_horizon_days,
-                        "monte_carlo_loss_threshold": monte_carlo_loss_threshold,
-                    }
-                )
-            else:
-                st.info(
-                    "The deployment is refreshing its analysis engine. Monte Carlo options will become available after the latest version finishes loading."
-                )
-            st.session_state["interactive_analysis"] = analyse_user_portfolio(
-                **analysis_options,
-            )
-            st.session_state.pop("interactive_error", None)
-        except Exception as error:  # noqa: BLE001 - show a user-readable dashboard error
-            st.session_state["interactive_error"] = str(error)
-
+_initialise_setup_state()
 interactive_error = st.session_state.get("interactive_error")
 interactive_analysis = st.session_state.get("interactive_analysis")
+if interactive_analysis is not None:
+    _render_results_sidebar(interactive_analysis)
+else:
+    with st.sidebar:
+        st.header("Guided setup", icon=":material/route:")
+        st.caption("Complete the three steps in the main workspace. The portfolio starts empty unless you choose the preset.")
+        st.badge(
+            f"Step {min(int(st.session_state.get('wizard_step', 1)), 3)} of 3",
+            icon=":material/pending:",
+            color="blue",
+        )
+        if st.button("Reset setup", icon=":material/restart_alt:", width="stretch"):
+            st.session_state["wizard_step"] = 1
+            st.session_state["draft_config"] = {}
+            for key in ("setup_scratch_stocks", "setup_preset_stocks"):
+                st.session_state[key] = [] if key.endswith("scratch_stocks") else PRESET_PORTFOLIO
+            st.rerun()
+        if summary := load_json("pipeline_summary.json"):
+            st.caption("A separate saved teaching snapshot is available, but it is not silently used for custom analyses.")
+            if st.button("Refresh teaching snapshot", icon=":material/refresh:", width="stretch"):
+                run_pipeline()
+
+if interactive_analysis is None:
+    active_step = min(int(st.session_state.get("wizard_step", 1)), 3)
+    _render_stepper(active_step)
+    if interactive_error:
+        st.error(interactive_error, icon=":material/error:")
+    if active_step == 1:
+        _render_portfolio_step()
+    elif active_step == 2:
+        _render_model_step()
+    else:
+        _render_review_step()
 if interactive_error:
     st.error(interactive_error)
 
@@ -925,48 +1301,3 @@ if interactive_analysis is not None:
         for model_name, error in result.model_errors.items():
             st.warning(f"{model_name.title()} was not used: {error}")
     st.space("medium")
-
-summary = load_json("pipeline_summary.json")
-
-with st.sidebar:
-    st.header("Application controls", icon=":material/tune:")
-    st.caption("Manage the current interactive run or refresh the saved teaching snapshot.")
-    if st.button(
-        "Clear current analysis",
-        icon=":material/delete_sweep:",
-        disabled=interactive_analysis is None and not interactive_error,
-        help="Remove the current recommendation and return to the empty start screen.",
-    ):
-        st.session_state.pop("interactive_analysis", None)
-        st.session_state.pop("interactive_error", None)
-        st.rerun()
-    if st.button(
-        "Refresh saved preset run",
-        icon=":material/refresh:",
-        help="Refreshes the separate reproducible pipeline snapshot. It does not choose holdings for your current analysis.",
-    ):
-        run_pipeline()
-
-if interactive_analysis is None:
-    st.header("Start a new analysis", icon=":material/add_chart:")
-    with st.container(border=True):
-        st.subheader("Your portfolio starts empty", icon=":material/search:")
-        st.write(
-            "Use the sidebar to search for company names or exchange tickers. "
-            "Choose at least two holdings, set your risk appetite, and run the analysis."
-        )
-        start_columns = st.columns(3)
-        with start_columns[0]:
-            st.markdown("**1 · Choose a starting point**")
-            st.caption("Build from scratch or load the preset six-stock teaching portfolio.")
-        with start_columns[1]:
-            st.markdown("**2 · Search and review**")
-            st.caption("Type a company name or ticker and press Enter. The resolved exchange ticker is shown before the results.")
-        with start_columns[2]:
-            st.markdown("**3 · Run the evidence-led analysis**")
-            st.caption("Review allocation, risk, stress tests, validation and model evidence in one report.")
-    if summary:
-        st.caption(
-            "A separate saved teaching snapshot is available in the project, but it is not loaded as your current portfolio. "
-            "Run a new analysis above to create a fresh recommendation."
-        )
