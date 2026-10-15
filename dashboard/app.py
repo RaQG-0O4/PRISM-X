@@ -175,6 +175,18 @@ def _set_widget_default(key: str, value: object) -> None:
         st.session_state[key] = value
 
 
+def _migrate_percentage_widget(key: str) -> None:
+    """Convert an older decimal threshold stored in session state to percentage points."""
+
+    if key in st.session_state:
+        try:
+            current_value = float(st.session_state[key])
+        except (TypeError, ValueError):
+            return
+        if -1.0 < current_value < 1.0:
+            st.session_state[key] = current_value * 100.0
+
+
 def _render_stepper(active_step: int) -> None:
     """Render the guided analysis stages as a compact visual stepper."""
 
@@ -305,7 +317,8 @@ def _initialise_setup_state() -> None:
     _set_widget_default("setup_transaction_cost", DEFAULT_ANALYSIS_CONFIG["transaction_cost_bps"])
     _set_widget_default("setup_mc_horizon", DEFAULT_ANALYSIS_CONFIG["monte_carlo_horizon_days"])
     _set_widget_default("setup_mc_simulations", DEFAULT_ANALYSIS_CONFIG["monte_carlo_simulations"])
-    _set_widget_default("setup_mc_threshold", DEFAULT_ANALYSIS_CONFIG["monte_carlo_loss_threshold"])
+    _migrate_percentage_widget("setup_mc_threshold")
+    _set_widget_default("setup_mc_threshold", -20.0)
 
 
 def _render_portfolio_step() -> None:
@@ -473,9 +486,9 @@ def _render_model_step() -> None:
                 with advanced_columns[2]:
                     threshold = st.slider(
                         "Loss threshold",
-                        min_value=-0.50,
-                        max_value=-0.05,
-                        step=0.05,
+                        min_value=-50.0,
+                        max_value=-5.0,
+                        step=5.0,
                         format="%.0f%%",
                         key="setup_mc_threshold",
                     )
@@ -508,7 +521,7 @@ def _render_model_step() -> None:
                     "transaction_cost_bps": float(transaction_cost),
                     "monte_carlo_horizon_days": int(horizon),
                     "monte_carlo_simulations": int(simulations),
-                    "monte_carlo_loss_threshold": float(threshold),
+                    "monte_carlo_loss_threshold": float(threshold) / 100.0,
                     "news": news,
                     "news_file_name": news_file_name,
                 }
@@ -584,7 +597,11 @@ def _render_results_sidebar(current_result: object) -> None:
         ("monte_carlo_simulations", "rerun_mc_simulations"),
         ("monte_carlo_loss_threshold", "rerun_mc_threshold"),
     ):
-        _set_widget_default(widget_key, saved_config[source_key])
+        if source_key == "monte_carlo_loss_threshold":
+            _migrate_percentage_widget(widget_key)
+            _set_widget_default(widget_key, float(saved_config[source_key]) * 100.0)
+        else:
+            _set_widget_default(widget_key, saved_config[source_key])
     with st.sidebar:
         st.header("Analysis controls", icon=":material/tune:")
         st.caption("The current result stays visible until a replacement analysis succeeds.")
@@ -621,7 +638,7 @@ def _render_results_sidebar(current_result: object) -> None:
                     transaction_cost = st.slider("Transaction cost (basis points)", min_value=0.0, max_value=100.0, step=5.0, key="rerun_transaction_cost")
                     horizon = st.slider("Simulation horizon (days)", min_value=21, max_value=756, step=21, key="rerun_mc_horizon")
                     simulations = st.select_slider("Number of simulations", options=[1_000, 2_500, 5_000, 10_000], key="rerun_mc_simulations")
-                    threshold = st.slider("Loss threshold", min_value=-0.50, max_value=-0.05, step=0.05, format="%.0f%%", key="rerun_mc_threshold")
+                    threshold = st.slider("Loss threshold", min_value=-50.0, max_value=-5.0, step=5.0, format="%.0f%%", key="rerun_mc_threshold")
                 rerun = st.form_submit_button("Run replacement analysis", type="primary", icon=":material/play_arrow:", width="stretch")
             if rerun:
                 try:
@@ -644,7 +661,7 @@ def _render_results_sidebar(current_result: object) -> None:
                             "transaction_cost_bps": float(transaction_cost),
                             "monte_carlo_horizon_days": int(horizon),
                             "monte_carlo_simulations": int(simulations),
-                            "monte_carlo_loss_threshold": float(threshold),
+                            "monte_carlo_loss_threshold": float(threshold) / 100.0,
                             "news": news,
                             "news_file_name": news_file_name,
                         }
